@@ -1,4 +1,4 @@
-// This file is part of the error.hpp library
+// This file is part of the error.hpp
 //
 // Copyright (c) 2018-2023, zero.kwok@foxmail.com
 // For the full copyright and license information, please view the LICENSE
@@ -7,10 +7,9 @@
 #ifndef base_error_h__
 #define base_error_h__
 
+#include <filesystem>
 #include <system_error>
 #include <string/string_util.h>
-#include <filesystem/path_util.h>
-#include "platform/platform_util.h"
 
 namespace util {
 
@@ -56,7 +55,7 @@ namespace util {
         virtual std::string message(int ev) const {
             if (ev == kSucceed)
                 return "Succeed";
-            return util::sformat("ERROR: 0x%08x", ev);
+            return util::sformat("BaseError: 0x%08x", ev);
         }
     };
 
@@ -65,8 +64,7 @@ namespace util {
     //! @return 返回cpp错误码对象.
     inline std::error_code MakeError(int ecode) {
         return std::error_code(
-            static_cast<int>(ecode),
-            BaseErrorCategory::Instance());
+            static_cast<int>(ecode), BaseErrorCategory::Instance());
     }
 
     //! @brief 通过本地系统错误码创建标准错误码对象.
@@ -74,66 +72,10 @@ namespace util {
     //! @param filename 如果是文件相关的错误, 则可以携带文件名, 这可以进一步探测错误原因.
     //! @param defaultCode 默认错误码.
     //! @return 返回cpp错误码对象.
-    inline std::error_code MakeErrorFromNative(
+    std::error_code MakeErrorFromNative(
         const int ecode,
         const std::filesystem::path& filename = {},
-        const BaseError defaultCode = kRuntimeError)
-    {
-        switch (ecode)
-        {
-        case ERROR_DISK_FULL:       // 磁盘空间不足或不支持大文件
-        {
-            if (!filename.empty())  // 若文件名不为空, 则探测下是否是不支持大文件
-            {
-                try
-                {
-                    auto fstype = util::path_filesystem(filename);
-                    if (fstype == util::FAT16 || fstype == util::FAT32)
-                    {
-                        namespace fs = std::filesystem;
-                        auto fname = filename;
-                        if (!fs::is_directory(fname))
-                            fname = fname.parent_path().lexically_normal();
-                        fs::space_info space = fs::space(fname);
-                        if (!ecode && space.free > 0x200000) // 2MB
-                            return MakeError(kFilesystemNotSupportLargeFiles);
-                    }
-                }
-                catch(...)
-                {}
-            }
-
-            return MakeError(kFilesystemNoSpace);
-        }
-
-        case ERROR_ACCESS_DENIED:
-            return MakeError(kFileNotWritable);
-
-        case ERROR_PATH_NOT_FOUND:
-        case ERROR_FILE_NOT_FOUND:
-            return MakeError(kFileNotFound);
-
-        case ERROR_WRONG_DISK:
-        case ERROR_FILE_INVALID:    // 文件所在的卷已被外部更改，因此打开的文件不再有效。
-        case ERROR_NO_SUCH_DEVICE:  // 没有这样的设备, U 盘突然被拔出
-            return MakeError(kFilesystemUnavailable);
-
-        case ERROR_INVALID_NAME:    // 无效文件名, 语法无效或太长, 这里排除bug那么只剩下路径过长
-            return MakeError(kFilePathTooLong);
-
-        default:
-            if (util::win::is_network_error(ecode))
-            {
-                if (!filename.empty())
-                    return MakeError(kFilesystemNetworkError);
-                else
-                    return MakeError(kNetworkError);
-            }
-            return MakeError(kFilesystemError);
-        }
-
-        return MakeError(defaultCode);
-    }
+        const BaseError defaultCode = kRuntimeError);
 
 } // namespace util
 

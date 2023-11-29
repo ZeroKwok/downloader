@@ -1,3 +1,9 @@
+// This file is part of the downloader library
+//
+// Copyright (c) 2018-2023, zero.kwok@foxmail.com
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+
 #ifndef range_file_h__
 #define range_file_h__
 
@@ -259,6 +265,7 @@ public:
 #if DEBUG || _DEBUG
 
 #include <random>
+#include <iostream>
 #include "string/string_util.h"
 
 // 重载 << 运算符  
