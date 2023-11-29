@@ -69,6 +69,9 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include>)
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER "${INCLUDE_FILES}")
 
+#
+# 注意 LNK4217 错误, 环境中头文件目录包含x86-windows, 因此在静态运行时中libcurl会包含导入dllimport.
+# 
 target_link_libraries(${PROJECT_NAME} PUBLIC nlog xcpr xlibcurl xzlib)
 
 install(EXPORT ${PROJECT_NAME} FILE ${PROJECT_NAME}Config.cmake DESTINATION cmake)
