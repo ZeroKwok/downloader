@@ -31,7 +31,6 @@ if(NOT TARGET ${_TARGET_NAME})
 
     set(matchlist "")
     foreach(item ${CMAKE_PREFIX_PATH})
-        message(item=${item})
         file(GLOB children RELATIVE ${item} ${item}/${PackageSuffix})
         foreach(child ${children})
             list(APPEND matchlist ${item}/${child})
