@@ -9,12 +9,13 @@
 
 #include "config.h"
 #include "range.hpp"
+#include "base_error.hpp"
 #include "common/scope.hpp"
 #include "common/assert.hpp"
 #include "filesystem/path_util.h"
 
 struct Range2 : public Range {
-    int64_t position = 0;
+    int64_t position = 0; // 不包含右边端点
     enum {
         kUnfilled,
         kPending,
@@ -125,15 +126,15 @@ public:
             return true;
 
         case Range2::kFilled:
-            util_assert(range.position == range.end);
+            util_assert(range.position == (range.end + 1));
             _finishedRanges.insert(range);
             mergeRanges(_finishedRanges);
             return true;
 
         case Range2::kPartial:
-            util_assert(range.position >= range.start && range.position < range.end);
-            _finishedRanges.insert({ range.start, range.position, range.position, Range2::kFilled });
-            _availableRanges.insert({ range.position + 1, range.end });
+            util_assert(range.start <= range.position && range.position <= range.end);
+            _finishedRanges.insert({ range.start, range.position - 1, range.position - 1, Range2::kFilled });
+            _availableRanges.insert({ range.position, range.end });
             mergeRanges(_finishedRanges);
             return true;
         }
@@ -147,10 +148,10 @@ public:
         try
         {
             std::error_code ecode;
-            if (!std::filesystem::exists(filename.parent_path(), error))
-                std::filesystem::create_directories(filename.parent_path(), error);
-            if (error)
-                return !error;
+            if (!std::filesystem::exists(filename.parent_path(), ecode))
+                std::filesystem::create_directories(filename.parent_path(), ecode);
+            if (ecode)
+                return !(error = util::MakeErrorFromNative(ecode.value(), filename, util::kFilesystemError));
 
             auto file = util::file_open(filename, O_CREAT | O_RDWR);
             auto size = util::file_size(file);
@@ -174,13 +175,27 @@ public:
         }
         catch (const util::ferror& ferr)
         {
-            error = std::error_code{ ferr.code(), std::system_category() };
+            return !(error = util::MakeErrorFromNative(ferr.code(), filename, util::kFilesystemError));
         }
 
         return !error;
     }
 
-    bool fill(Range2& range, const std::string_view& bytes, int size, std::error_code& error)
+    void close() 
+    {
+        util_assert(_file);
+        util_assert(_allocateRanges.empty());
+
+        std::lock_guard<std::mutex> locker(_mutexFile);
+        {
+            _file.close();
+            _filename.clear();
+        }
+    }
+
+    bool fill(Range2& range, const 
+        std::string_view& bytes, int64_t size, 
+        std::error_code& error)
     {
         error.clear();
         try
@@ -191,14 +206,20 @@ public:
                 return true;
             util_assert(range.position >= range.start);
 
+            try
             {
                 std::lock_guard<std::mutex> locker(_mutexFile);
                 util::file_seek(_file, range.position, 0);
                 util::file_write(_file, bytes.data(), size);
             }
+            catch (const util::ferror& ferr)
+            {
+                return !(error = util::MakeErrorFromNative(ferr.code(), _filename, util::kFilesystemError));
+            }
 
-            range.position += (size - 1);
-            if (range.position == range.end)
+            // position 是下一个要填充的元素
+            range.position = range.position + size;
+            if (range.position == (range.end + 1))
                 range.state = Range2::kFilled;
             else
                 range.state = Range2::kPartial;
@@ -246,7 +267,7 @@ inline std::ostream& operator<<(std::ostream& os, const Range2& br) {
         br.start, br.end, br.state, br.position));
 }
 
-inline void UtilTestForClassRBlob()
+inline void UtilTestForClassRangeFile()
 {
     if (0)
     {
