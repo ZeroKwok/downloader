@@ -12,7 +12,7 @@ project(downloader)
 #set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_CURRENT_SOURCE_DIR}/bin/lib)
 
 option(DOWNLOADER_BUILD_EXAMPLE "Whether to compile the example project" ON)
-option(DOWNLOADER_STATIC_RUNTIME "Enable link with runtime statically" ON)
+option(DOWNLOADER_STATIC_RUNTIME "Enable link with runtime statically" OFF)
 
 if(MSVC AND DOWNLOADER_STATIC_RUNTIME)
     foreach(flag_var CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS_MINSIZEREL CMAKE_CXX_FLAGS_RELWITHDEBINFO)
@@ -72,7 +72,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER "${INCLUDE_FILES}
 #
 # 注意 LNK4217 错误, 环境中头文件目录包含x86-windows, 因此在静态运行时中libcurl会包含导入dllimport.
 # 
-target_link_libraries(${PROJECT_NAME} PUBLIC nlog xcpr xlibcurl xzlib)
+target_link_libraries(${PROJECT_NAME} PUBLIC libnlog xcpr xlibcurl xzlib)
 
 install(EXPORT ${PROJECT_NAME} FILE ${PROJECT_NAME}Config.cmake DESTINATION cmake)
 install(TARGETS ${PROJECT_NAME}
