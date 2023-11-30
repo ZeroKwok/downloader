@@ -20,7 +20,7 @@ std::shared_ptr<cpr::Session> MakeSession(const cpr::Url& url)
     session->SetUrl(url);
     session->SetOption(cpr::Redirect{});
     session->SetOption(cpr::VerifySsl{ false });
-    session->SetConnectTimeout(1000);
+    session->SetConnectTimeout(1500);
     session->SetHeader(cpr::Header{
         {"Connection", "keep-alive"}
         });
@@ -51,7 +51,7 @@ bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::er
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_HTTPGET, 1);
         curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1000);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1500);
 
         cpr::VerifySsl verify{ false };
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, verify ? 1L : 0L);
@@ -98,7 +98,7 @@ bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::er
         case CURLE_OPERATION_TIMEDOUT:
         case CURLE_SSL_CONNECT_ERROR:
             // 网络错误
-            NLOG_ERR("getFileLength() failed, error: {1}, {2}")
+            NLOG_ERR("GetFileAttribute() failed, error: {1}, {2}")
                 % res
                 % curl_easy_strerror(res);
             error = util::MakeError(util::kNetworkError);
@@ -106,7 +106,7 @@ bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::er
 
         default:
             // 未知错误 或 运行时错误
-            NLOG_ERR("getFileLength() failed, error: {1}, {2}")
+            NLOG_ERR("GetFileAttribute() failed, error: {1}, {2}")
                 % res
                 % curl_easy_strerror(res);
             error = util::MakeError(util::kRuntimeError);
@@ -222,33 +222,60 @@ bool DownloadFile(
         std::atomic_int   flag(kRunning);
         std::atomic_llong processedBytes(0);
 
-        NLOG_PRO("DownloadFile({1}, {2}) {{3}, } ...")
-            % url
-            % filename
-            % config.connections;
+        NLOG_PRO("DownloadFile({{1}}) ...") % config.connections;
+        NLOG_PRO(" - URL : ") << url;
+        NLOG_PRO(" - File: ") << filename;
 
         file_attribute attribute = {};
         if (config.connections > 1) //  单点下载不用探测文件长度
         {
-            if (!GetFileAttribute(attribute, url, error))
+            int tryCount = 5;
+            do 
+            {
+                if (!GetFileAttribute(attribute, url, error))
+                    if (error.value() != util::kNetworkError)
+                        return !error;
+            } 
+            while (--tryCount > 0);
+
+            if (error) // 重试后仍不成功
                 return !error;
+
             NLOG_PRO("GetFileAttribute() -> {1}\r\n{2}")
                 % attribute.contentLength
                 % attribute.header;
         }
+
+        util::ferror ferr;
+        if (util::file_exist(filename, ferr))
+            util::file_remove(filename, ferr);
+        if (ferr) {
+            NLOG_ERR("util::file_*() failed, error: ") << ferr.message();
+            return !(error = util::MakeErrorFromNative(ferr.code(), filename, util::kFilesystemError));
+        }
+
+        RangeFile rf;
+        util_scope_exit = [&] {
+            std::error_code ecode;
+            if (!rf.close(!error, ecode)) {
+                error = error ? error :ecode; // 若关闭前有错误, 则不改变之前的错误
+                NLOG_ERR("RangeFile::close() failed, error: ") << ecode.message();
+            }
+        };
 
         auto session1 = MakeSession(url);
         if (attribute.contentLength == -1 || 
             attribute.contentLength <= config.blockSize ||
             attribute.acceptRanges.empty())
         {
-            NLOG_PRO("Direct download...");
+            NLOG_PRO("Direct download ...");
 
             // 未知大小 or 长度太短 or 不支持范围请求, 只能单点下载
+            session1->SetConnectTimeout(5000);
             session1->SetProgressCallback(cpr::ProgressCallback(
                 [&](cpr::cpr_off_t downloadTotal,
                     cpr::cpr_off_t downloadNow,
-                    cpr::cpr_off_t, cpr::cpr_off_t, intptr_t userdata) -> bool
+                    cpr::cpr_off_t, cpr::cpr_off_t, intptr_t) -> bool
                 {
                     // downloadTotal 很可能为0
                     if (callback && !callback({ downloadTotal, downloadNow })) {
@@ -258,14 +285,9 @@ bool DownloadFile(
                     return true;
                 }));
 
-            RangeFile rf(attribute.contentLength);
+            rf.reserve(attribute.contentLength);
             if (!rf.open(filename, error))
                 return !error;
-            util_scope_exit = [&] { 
-                std::error_code ecode;
-                if (!rf.close(!error, ecode))
-                    error = ecode;
-            };
 
             std::error_code ecode;
             auto response = session1->Download(cpr::WriteCallback{
@@ -273,17 +295,17 @@ bool DownloadFile(
                     return rf.fill(data, data.size(), ecode);
                 }});
             HandleRequestError(response, ecode, flag, error);
+
             return !error;
         }
 
-        RangeFile rf(attribute.contentLength, config.blockSize);
-        if(!rf.open(filename, error))
+        NLOG_PRO("Multipoint download ...");
+
+        rf.reserve(attribute.contentLength, config.blockSize);
+        if(!rf.open(filename, error)) {
+            NLOG_ERR("RangeFile::open() failed, error: ") << error.message();
             return !error;
-        util_scope_exit = [&] {
-            std::error_code ecode;
-            if (!rf.close(!error, ecode))
-                error = ecode;
-        };
+        }
 
         auto worker = [&](std::error_code& error)
         {
