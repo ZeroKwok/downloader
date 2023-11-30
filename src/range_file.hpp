@@ -38,7 +38,7 @@ struct Range2 : public Range {
 class RangeFile
 {
     int64_t               _sizeHint = 0;
-    int64_t               _sizeTotal = 0;
+    int64_t               _sizeTotal = -1;
     std::set<Range2>      _allocateRanges;
     std::set<Range2>      _finishedRanges;
     std::set<Range2>      _availableRanges;
@@ -48,7 +48,7 @@ class RangeFile
     std::mutex            _mutexFile;
 
 public:
-    RangeFile(int64_t size = 0, int sizeHint = 0x100000)
+    RangeFile(int64_t size = -1, int sizeHint = 0x100000)
         : _sizeHint(sizeHint)
         , _sizeTotal(size)
     {}
@@ -171,6 +171,8 @@ public:
                 //
                 if (SetEndOfFile((HANDLE)file.native_id()) == 0)
                     throw util::ferror(::GetLastError(), "SetEndOfFile() failed");
+
+                util::file_seek(file, 0, 0);
             }
 
             _file = file;
@@ -199,8 +201,27 @@ public:
         }
     }
 
-    bool fill(Range2& range, const 
-        std::string_view& bytes, int64_t size, 
+    bool fill(const std::string_view& bytes, int64_t size, std::error_code& error)
+    {
+        error.clear();
+        try
+        {
+            if (size <= 0) // 没有可填充的数据
+                return true;
+
+            std::lock_guard<std::mutex> locker(_mutexFile);
+            util::file_write(_file, bytes.data(), size);
+        }
+        catch (const util::ferror& ferr)
+        {
+            error = util::MakeErrorFromNative(ferr.code(), _filename, util::kFilesystemError);
+        }
+
+        return !error;
+    }
+
+    bool fill(Range2& range, 
+        const std::string_view& bytes, int64_t size,
         std::error_code& error)
     {
         error.clear();
@@ -242,7 +263,7 @@ public:
         }
         catch (const util::ferror& ferr)
         {
-            error = std::error_code{ ferr.code(), std::system_category() };
+            error = util::MakeErrorFromNative(ferr.code(), _filename, util::kFilesystemError);
         }
 
         return !error;
