@@ -12,6 +12,7 @@
 #include "cpr/cpr.h"
 #include "common/scope.hpp"
 #include "common/assert.hpp"
+#include <boost/algorithm/string.hpp>
 
 std::shared_ptr<cpr::Session> MakeSession(const cpr::Url& url)
 {
@@ -26,10 +27,20 @@ std::shared_ptr<cpr::Session> MakeSession(const cpr::Url& url)
     return session;
 }
 
-bool GetFileLength(int64_t& length, const std::string& url, std::error_code& error)
+inline size_t WriteHeadCallback(char* buffer, size_t size, size_t nitems, file_attribute* attribute) {
+    size *= nitems;
+    if (strncmp(buffer, "Accept-Ranges:", 14) == 0)
+        attribute->acceptRanges = boost::algorithm::trim_copy(std::string(buffer + 14, size - 14));
+    if (strncmp(buffer, "Content-Range:", 14) == 0)
+        attribute->contentRange = boost::algorithm::trim_copy(std::string(buffer + 14, size - 14));
+    attribute->header.append(buffer, size);
+    return size;
+}
+
+bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::error_code& error)
 {
-    length = -1;
     error.clear();
+    attribute = {};
     try
     {
         CURL* curl = curl_easy_init();
@@ -61,19 +72,25 @@ bool GetFileLength(int64_t& length, const std::string& url, std::error_code& err
             mask |= CURL_REDIR_POST_303;
         curl_easy_setopt(curl, CURLOPT_POSTREDIR, mask);
 
+        // header
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, WriteHeadCallback);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &attribute);
+
+        // range
+        curl_easy_setopt(curl, CURLOPT_RANGE, "0-");
+
         CURLcode res = curl_easy_perform(curl);
-
-
         switch (res)
         {
         case CURLE_OK: {
             long status_code{};
             curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
-            if (200 == status_code) {
-                curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &length);
-            }
+            if (200 == status_code || 206 == status_code)
+                curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &attribute.contentLength);
+            if (206 == status_code && attribute.acceptRanges.empty())
+                attribute.acceptRanges = "bytes"; // 这里要确定: 返回206 是否一定表示支持: range: bytes
         }
-                     break;
+        break;
 
         case CURLE_RECV_ERROR:
         case CURLE_SEND_ERROR:
@@ -116,14 +133,19 @@ bool DownloadFile(
     error.clear();
     try
     {
-        int64_t sizeTotal = -1;
-        if (!GetFileLength(sizeTotal, url, error))
-            return !error;
+        file_attribute attribute = {};
+        if (config.connections >= 1) //  单点下载不用探测文件长度
+        {
+            if (!GetFileAttribute(attribute, url, error))
+                return !error;
+        }
 
         auto session1 = MakeSession(url);
-        if (sizeTotal == -1 || config.connections <= 1)
+        if (attribute.contentLength == -1 || 
+            attribute.contentLength <= config.blockSize ||
+            attribute.acceptRanges.empty())
         {
-            // 未知大小, 只能单点下载
+            // 未知大小 or 长度太短 or 不支持范围请求, 只能单点下载
             std::ofstream ostream(filename);
             session1->SetProgressCallback(cpr::ProgressCallback(
                 [&](cpr::cpr_off_t downloadTotal,
@@ -140,11 +162,10 @@ bool DownloadFile(
         }
 
         enum { kRunning = 0, kFailed, kCancelled };
-
         std::atomic_int   flag(kRunning);
         std::atomic_llong processedBytes(0);
 
-        RangeFile rf(sizeTotal, config.blockSize);
+        RangeFile rf(attribute.contentLength, config.blockSize);
         if(!rf.open(filename, error))
             return !error;
        
@@ -265,6 +286,8 @@ bool DownloadFile(
         // 等待执行完毕
         while (flag.load() == kRunning && !rf.is_full())
         {
+            // TODO 若存在部分线程已经退出, 并且没有错误, 这里可能会发生死循环
+            // 需要处理
             if (ecodes[0]) // 存在错误
             {
                 std::map<int, int> counts;
@@ -275,7 +298,7 @@ bool DownloadFile(
                     std::pair<int, int> item;
                     for (auto p : counts)
                         item = item.second > p.second ? item : p;
-                    NLOG_ERR("download_file({1}) failed, error: {2}, count: {3}")
+                    NLOG_ERR("download_file({1}, {2}) failed, error: {3}, count: {4}")
                         % url
                         % filename.wstring()
                         % item.first
@@ -289,7 +312,7 @@ bool DownloadFile(
 
             if (callback)
             {
-                if (!callback({ sizeTotal, processedBytes }))
+                if (!callback({ attribute.contentLength, processedBytes }))
                 {
                     flag  = kCancelled;
                     error = util::MakeError(util::kOperationInterrupted);

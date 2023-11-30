@@ -27,8 +27,8 @@ struct download_status
 struct download_preference
 {
     int connections = 4;            //!< 下载连接数
-    int blockSize   = 1024 * 1024;  //!< 连接分块传输的大小
-    int interval    = 1000 / 10;    //!< 状态汇报的间隔时长(毫秒)
+    int interval    = 1000 / 10;    //!< 状态汇报的间隔时长(毫秒), 单连接下载时失效
+    int blockSize   = 1024 * 1024;  //!< 连接分块传输的大小, 单连接下载时失效
 };
 
 //! @brief 下载文件
@@ -45,11 +45,22 @@ bool DownloadFile(
     const download_preference config,
     std::error_code& error);
 
-//! @brief 请求文件长度
-//! @param length 输出的文件长度(字节数), -1 未知文件长度.
+//!
+//! 文件属性
+//!
+struct file_attribute
+{
+    int64_t     contentLength = -1; //!< 文件长度(字节数), -1 未知文件长度
+    std::string contentRange;       //!< 内容范围
+    std::string acceptRanges;       //!< 可以接受的范围请求格式
+    std::string header;             //!< http 响应头
+};
+
+//! @brief 请求文件属性
+//! @param attribute 输出的文件属性.
 //! @param url 文件 url
 //! @param error 失败时将包含具体的错误原因(BaseError)
 //! @return 成功返回true, 否则失败
-bool GetFileLength(int64_t& length, const std::string& url, std::error_code& error);
+bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::error_code& error);
 
 #endif // downloader_h__
