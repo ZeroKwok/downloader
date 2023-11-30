@@ -54,6 +54,30 @@ public:
         , _sizeTotal(size)
     {}
 
+    ~RangeFile() {
+        if (vaild())
+            close(false, std::error_code{});
+    }
+
+    operator bool() const {
+        return vaild();
+    }
+
+    bool vaild() const {
+        return _file;
+    }
+
+    // 文件已经打开 或 已经分配了区域, 则不能再指派大小
+    bool reserve(int64_t size = -1, int sizeHint = 0x100000) {
+        if (vaild() || 
+            _finishedRanges.size() ||
+            _allocateRanges.size()) {
+            return false;
+        }
+        _sizeHint = sizeHint;
+        _sizeTotal = size;
+    }
+
     // 分配区域并保证不相交
     bool allocate(Range2& range)
     {
@@ -198,7 +222,6 @@ public:
 
         util_assert(_file);
         util_assert(_allocateRanges.empty());
-
         {
             std::lock_guard<std::mutex> locker(_mutexFile);
             _file.close();
@@ -214,6 +237,16 @@ public:
             if (ferr)
                 return !(error = util::MakeErrorFromNative(ferr.code(), _filename2, util::kFilesystemError));
         }
+
+        {
+            std::lock_guard<std::recursive_mutex> locker(_mutex);
+            _allocateRanges.clear();
+            _finishedRanges.clear();
+            _availableRanges.clear();
+        }
+
+        _filename.clear();
+        _filename2.clear();
 
         return !error;
     }
