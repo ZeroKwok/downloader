@@ -122,6 +122,92 @@ bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::er
     return !error;
 }
 
+enum { kRunning = 0, kFailed, kCancelled };
+
+//
+// 错误处理
+// 致命错误 & 非致命错误
+//   文件系统错误
+//      磁盘已满
+//      权限不足
+//      磁盘无法访问
+//   网络错误
+//      断开连接 ?
+// 返回true, 表示致命错误
+// 
+bool HandleRequestError(
+    const cpr::Response& response, 
+    const std::error_code& ecode, 
+    const std::atomic_int& flag,
+    std::error_code& error)
+{
+    switch (response.error.code)
+    {
+    case cpr::ErrorCode::REQUEST_CANCELLED:
+        if (ecode)
+        {
+            // 因为错误终止, 在这里几乎都是文件操作, 可以归属为致命错误
+            NLOG_ERR("Request Error: {1}, {2}")
+                % response.status_code
+                % ecode.message();
+            error = ecode;
+        }
+        else
+        {
+            // 操作取消
+            util_assert(flag != kRunning);
+            if (flag == kCancelled) // 只有取消才改写error
+                error = util::MakeError(util::kOperationInterrupted);
+        }
+        return true;
+
+        // 余下的错误, 不好判断是否属于致命错误(因为网络错误可能因为重试变得好转)
+        // 因此, 这里仅设置错误码, 由外部做决断
+    case cpr::ErrorCode::NETWORK_SEND_FAILURE:
+    case cpr::ErrorCode::NETWORK_RECEIVE_ERROR:
+    case cpr::ErrorCode::HOST_RESOLUTION_FAILURE:
+    case cpr::ErrorCode::CONNECTION_FAILURE:
+    case cpr::ErrorCode::OPERATION_TIMEDOUT:
+    case cpr::ErrorCode::SSL_CONNECT_ERROR:
+        // 网络错误
+        NLOG_ERR("Request Error: {1}, {2}, {3}")
+            % response.status_code
+            % int(response.error.code)
+            % response.error.message;
+        error = util::MakeError(util::kNetworkError);
+        return false;
+
+    case cpr::ErrorCode::INTERNAL_ERROR:
+    case cpr::ErrorCode::EMPTY_RESPONSE:
+        // 未知错误 或 运行时错误
+        NLOG_ERR("Request Error: {1}, {2}, {3}")
+            % response.status_code
+            % int(response.error.code)
+            % response.error.message;
+        error = util::MakeError(util::kNetworkError);
+        return false;
+
+    case cpr::ErrorCode::OK:
+        if (200 == response.status_code || 206 == response.status_code)
+            return false; // 成功
+
+        if (404 == response.status_code) { // 资源不存在
+            error = util::MakeError(util::kFileNotFound);
+            return true;
+        }
+
+        if (400 <= response.status_code) { // 下载错误
+            NLOG_ERR("Request Error: {1}, {2}")
+                % response.status_code
+                % response.error.message;
+            error = util::MakeError(util::kOperationFailed);
+        }
+        return false;
+    }
+
+    return false;
+}
+
 bool DownloadFile(
     const std::string& url, 
     const std::filesystem::path& filename,
@@ -133,11 +219,22 @@ bool DownloadFile(
     error.clear();
     try
     {
+        std::atomic_int   flag(kRunning);
+        std::atomic_llong processedBytes(0);
+
+        NLOG_PRO("DownloadFile({1}, {2}) {{3}, } ...")
+            % url
+            % filename
+            % config.connections;
+
         file_attribute attribute = {};
-        if (config.connections >= 1) //  单点下载不用探测文件长度
+        if (config.connections > 1) //  单点下载不用探测文件长度
         {
             if (!GetFileAttribute(attribute, url, error))
                 return !error;
+            NLOG_PRO("GetFileAttribute() -> {1}\r\n{2}")
+                % attribute.contentLength
+                % attribute.header;
         }
 
         auto session1 = MakeSession(url);
@@ -145,25 +242,34 @@ bool DownloadFile(
             attribute.contentLength <= config.blockSize ||
             attribute.acceptRanges.empty())
         {
+            NLOG_PRO("Direct download...");
+
             // 未知大小 or 长度太短 or 不支持范围请求, 只能单点下载
-            std::ofstream ostream(filename);
             session1->SetProgressCallback(cpr::ProgressCallback(
                 [&](cpr::cpr_off_t downloadTotal,
                     cpr::cpr_off_t downloadNow,
                     cpr::cpr_off_t, cpr::cpr_off_t, intptr_t userdata) -> bool
                 {
                     // downloadTotal 很可能为0
-                    if (callback)
-                        return callback({ downloadTotal, downloadNow });
+                    if (callback && !callback({ downloadTotal, downloadNow })) {
+                        flag = kCancelled;
+                        return false;
+                    }
                     return true;
                 }));
-            session1->Download(ostream);
+
+            RangeFile rf(attribute.contentLength);
+            if (!rf.open(filename, error))
+                return !error;
+
+            std::error_code ecode;
+            auto response = session1->Download(cpr::WriteCallback{
+                [&](const std::string& data, intptr_t userdata) -> bool {
+                    return rf.fill(data, data.size(), ecode);
+                }});
+            HandleRequestError(response, ecode, flag, error);
             return !error;
         }
-
-        enum { kRunning = 0, kFailed, kCancelled };
-        std::atomic_int   flag(kRunning);
-        std::atomic_llong processedBytes(0);
 
         RangeFile rf(attribute.contentLength, config.blockSize);
         if(!rf.open(filename, error))
@@ -173,7 +279,9 @@ bool DownloadFile(
         {
             NLOG_APP("Worker start: {1}") % std::this_thread::get_id();
             util_scope_exit = [&] {
-                NLOG_APP("Worker finished: {1}") % std::this_thread::get_id();
+                NLOG_APP("Worker finished: {1}, result: {2}")
+                    % std::this_thread::get_id()
+                    % error.message();
             };
 
             try 
@@ -190,86 +298,16 @@ bool DownloadFile(
                     std::error_code ecode;
                     session->SetOption(cpr::Range{ range.start, range.end });
                     session->SetWriteCallback(cpr::WriteCallback{
-                        [&](std::string data, intptr_t userdata) -> bool
+                        [&](const std::string& data, intptr_t userdata) -> bool
                         {
                             rf.fill(range, data, data.size(), ecode);
                             processedBytes += data.size();
                             return !ecode && flag == kRunning;
                         } });
 
-                    // 错误处理
-                    // 致命错误 & 非致命错误
-                    //   文件系统错误
-                    //      磁盘已满
-                    //      权限不足
-                    //      磁盘无法访问
-                    //   网络错误
-                    //      断开连接 ?
-
                     auto response = session->Get();
-                    switch (response.error.code)
-                    {
-                    case cpr::ErrorCode::REQUEST_CANCELLED:
-                        if (ecode)
-                        {
-                            // 因为错误终止, 在这里几乎都是文件操作, 可以归属为致命错误
-                            NLOG_ERR("Request Error: {1}, {2}")
-                                % response.status_code
-                                % ecode.message();
-                            error = ecode;
-                        }
-                        else
-                        {
-                            // 操作取消
-                            util_assert(flag != kRunning);
-                            if (flag == kCancelled) // 只有取消才改写error
-                                error = util::MakeError(util::kOperationInterrupted);
-                        }
-                        return;
-
-                    // 余下的错误, 不好判断是否属于致命错误(因为网络错误可能因为重试变得好转)
-                    // 因此, 这里仅设置错误码, 由外部做决断
-                    case cpr::ErrorCode::NETWORK_SEND_FAILURE:
-                    case cpr::ErrorCode::NETWORK_RECEIVE_ERROR:
-                    case cpr::ErrorCode::HOST_RESOLUTION_FAILURE:
-                    case cpr::ErrorCode::CONNECTION_FAILURE:
-                    case cpr::ErrorCode::OPERATION_TIMEDOUT: 
-                    case cpr::ErrorCode::SSL_CONNECT_ERROR:
-                        // 网络错误
-                        NLOG_ERR("Request Error: {1}, {2}, {3}")
-                            % response.status_code
-                            % int(response.error.code)
-                            % response.error.message;
-                        error = util::MakeError(util::kNetworkError);
-                        break;
-
-                    case cpr::ErrorCode::INTERNAL_ERROR:
-                    case cpr::ErrorCode::EMPTY_RESPONSE:
-                        // 未知错误 或 运行时错误
-                        NLOG_ERR("Request Error: {1}, {2}, {3}")
-                            % response.status_code
-                            % int(response.error.code)
-                            % response.error.message;
-                        error = util::MakeError(util::kNetworkError);
-                        break;
-
-                    case cpr::ErrorCode::OK:
-                        if (200 == response.status_code || 206 == response.status_code)
-                            break; // 成功
-
-                        if (404 == response.status_code) { // 资源不存在
-                            error = util::MakeError(util::kFileNotFound);
-                            return;
-                        }
-
-                        if (400 <= response.status_code) { // 下载错误
-                            NLOG_ERR("Request Error: {1}, {2}") 
-                                % response.status_code
-                                % response.error.message;
-                            error = util::MakeError(util::kOperationFailed);
-                        }
-                        break;
-                    }
+                    if (HandleRequestError(response, ecode, flag, error))
+                        return !error;
                 }
             }
             catch (const std::exception& e)
@@ -330,6 +368,7 @@ bool DownloadFile(
     {
         NLOG_ERR("Unhandled exception: ") << e.what();
     }
+    NLOG_PRO("Download() finished, result: {1}") % error.message();
 
     return !error;
 }
