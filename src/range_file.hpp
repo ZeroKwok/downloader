@@ -207,7 +207,7 @@ public:
         try
         {
             if (!range.valid() || range.state == Range2::kFilled || range.state == Range2::kUnfilled)
-                return !(error = std::make_error_code(std::errc::invalid_argument));
+                return !(error = util::MakeError(util::kRuntimeError));
             if (size <= 0) // 没有可填充的数据
                 return true;
             util_assert(range.position >= range.start);
