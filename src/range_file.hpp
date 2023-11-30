@@ -43,6 +43,7 @@ class RangeFile
     std::set<Range2>      _finishedRanges;
     std::set<Range2>      _availableRanges;
     std::filesystem::path _filename;
+    std::filesystem::path _filename2;
     util::ffile           _file;
     std::recursive_mutex  _mutex;
     std::mutex            _mutexFile;
@@ -159,7 +160,8 @@ public:
             if (ecode)
                 return !(error = util::MakeErrorFromNative(ecode.value(), filename, util::kFilesystemError));
 
-            auto file = util::file_open(filename, O_CREAT | O_RDWR);
+            auto temp = filename.wstring() + L".temp";
+            auto file = util::file_open(temp, O_CREAT | O_RDWR);
             auto size = util::file_size(file);
 
             if (size != _sizeTotal && _sizeTotal > 0)
@@ -177,6 +179,7 @@ public:
 
             _file = file;
             _filename = filename;
+            _filename2 = temp;
 
             // TODO
             // 读取mate文件, 恢复断点
@@ -189,16 +192,30 @@ public:
         return !error;
     }
 
-    void close() 
+    bool close(bool finished, std::error_code& error)
     {
+        error.clear();
+
         util_assert(_file);
         util_assert(_allocateRanges.empty());
 
-        std::lock_guard<std::mutex> locker(_mutexFile);
         {
+            std::lock_guard<std::mutex> locker(_mutexFile);
             _file.close();
-            _filename.clear();
         }
+
+        if (finished)
+        {
+            if (_sizeTotal > 0 && !is_full())
+                return !(error = util::MakeError(util::kInvalidParam));
+
+            util::ferror ferr;
+            util::file_move(_filename2, _filename, ferr);
+            if (ferr)
+                return !(error = util::MakeErrorFromNative(ferr.code(), _filename2, util::kFilesystemError));
+        }
+
+        return !error;
     }
 
     bool fill(const std::string_view& bytes, int64_t size, std::error_code& error)

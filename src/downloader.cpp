@@ -261,6 +261,11 @@ bool DownloadFile(
             RangeFile rf(attribute.contentLength);
             if (!rf.open(filename, error))
                 return !error;
+            util_scope_exit = [&] { 
+                std::error_code ecode;
+                if (!rf.close(!error, ecode))
+                    error = ecode;
+            };
 
             std::error_code ecode;
             auto response = session1->Download(cpr::WriteCallback{
@@ -274,7 +279,12 @@ bool DownloadFile(
         RangeFile rf(attribute.contentLength, config.blockSize);
         if(!rf.open(filename, error))
             return !error;
-       
+        util_scope_exit = [&] {
+            std::error_code ecode;
+            if (!rf.close(!error, ecode))
+                error = ecode;
+        };
+
         auto worker = [&](std::error_code& error)
         {
             NLOG_APP("Worker start: {1}") % std::this_thread::get_id();
@@ -362,7 +372,6 @@ bool DownloadFile(
 
         for (auto t : threads)
             t->join();
-        rf.close();
     }
     catch (const std::exception& e)
     {
