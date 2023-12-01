@@ -10,6 +10,7 @@
 #include "config.h"
 #include "common/scope.hpp"
 #include "common/assert.hpp"
+#include <algorithm>
 
 struct Range
 {
