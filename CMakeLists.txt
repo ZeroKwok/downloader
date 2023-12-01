@@ -1,7 +1,7 @@
 cmake_policy(SET CMP0074 NEW)
 cmake_minimum_required(VERSION 3.13)
 
-project(downloader)
+project(downloader VERSION 0.2.1.0)
 
 # 调试
 #set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG          ${CMAKE_CURRENT_SOURCE_DIR}/bin)
@@ -12,7 +12,7 @@ project(downloader)
 #set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_CURRENT_SOURCE_DIR}/bin/lib)
 
 option(DOWNLOADER_BUILD_EXAMPLE "Whether to compile the example project" ON)
-option(DOWNLOADER_STATIC_RUNTIME "Enable link with runtime statically" OFF)
+option(DOWNLOADER_STATIC_RUNTIME "Enable link with runtime statically" ON)
 
 if(MSVC AND DOWNLOADER_STATIC_RUNTIME)
     foreach(flag_var CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS_MINSIZEREL CMAKE_CXX_FLAGS_RELWITHDEBINFO)
@@ -92,7 +92,17 @@ install(FILES "${PROJECT_PDB_DIRECTORY}/\${CMAKE_INSTALL_CONFIG_NAME}/${PROJECT_
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE DESTINATION ./ OPTIONAL)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.md DESTINATION ./ OPTIONAL)
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/example DESTINATION ./)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/cmake DESTINATION ./)
 
 if(DOWNLOADER_BUILD_EXAMPLE)
     add_subdirectory(example)
+endif()
+
+if (NOT ${CMAKE_CURRENT_SOURCE_DIR} STREQUAL ${CMAKE_SOURCE_DIR})
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/build/templates.in" 
+                   "${CMAKE_CURRENT_SOURCE_DIR}/build/build_static_static_x86_vc14.2.py")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/build/templates.in" 
+                   "${CMAKE_CURRENT_SOURCE_DIR}/build/build_static_dynamic_x86_vc14.2.py")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/build/templates.in" 
+                   "${CMAKE_CURRENT_SOURCE_DIR}/build/build_static_static_x86_vc14.1_xp.py")
 endif()
