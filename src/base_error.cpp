@@ -11,6 +11,11 @@
 #include <filesystem/path_util.h>
 #include <platform/platform_util.h>
 
+// SDK v7.1A 中没有定义这个错误码
+#ifndef ERROR_NO_SUCH_DEVICE
+#   define ERROR_NO_SUCH_DEVICE 433L
+#endif
+
 namespace util {
 
 std::error_code MakeErrorFromNative(
