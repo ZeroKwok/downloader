@@ -411,7 +411,7 @@ bool DownloadFile(
 
             std::error_code ecode;
             if (!rf.dump(ecode))
-                NLOG_WAR("RangeFile::save_meta() failed, error: ") << ecode.message();
+                NLOG_WAR("RangeFile::dump() failed, error: ") << ecode.message();
 
             std::this_thread::sleep_for(std::chrono::milliseconds(config.interval));
         }
