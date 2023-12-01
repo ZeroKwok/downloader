@@ -10,6 +10,7 @@
 #include <set>
 #include <mutex>
 #include <memory>
+#include <fstream>
 #include <algorithm>
 #include <filesystem>
 
@@ -18,8 +19,16 @@
 #include "base_error.hpp"
 #include "common/scope.hpp"
 #include "common/assert.hpp"
+#include "common/bytedata.hpp"
 #include "filesystem/path_util.h"
 
+#include <boost/algorithm/string.hpp>
+#include <boost/serialization/set.hpp>
+#include <boost/serialization/serialization.hpp>
+
+//
+// 包含填充状态的文件区间
+//
 struct Range2 : public Range {
     int64_t position = 0; // 不包含右边端点
     enum {
@@ -30,29 +39,60 @@ struct Range2 : public Range {
     } state = kUnfilled;
 };
 
+//
+// 区间化文件的元数据, 用于状态的序列化, 由于它应该是
+//
+struct RangeFileMeta {
+    int64_t          _blockHint = 0;
+    int64_t          _bytesTotal = -1;
+    int64_t          _bytesProcessed = 0;
+    std::set<Range2> _allocateRanges;
+    std::set<Range2> _finishedRanges;
+    std::set<Range2> _availableRanges;
+};
+
+namespace boost {
+    namespace serialization {
+        template<class Archive>
+        void serialize(Archive& ar, Range2& d, const unsigned int version) {
+            ar & d.start;
+            ar & d.end;
+            ar & d.position;
+            ar & d.state;
+        }
+
+        template<class Archive>
+        void serialize(Archive& ar, RangeFileMeta& d, const unsigned int version) {
+            ar & d._blockHint;
+            ar & d._bytesTotal;
+            ar & d._bytesProcessed;
+            ar & d._allocateRanges;
+            ar & d._finishedRanges;
+            ar & d._availableRanges;
+        }
+    } // namespace serialization
+} // boost
+
+// 区间化文件实现
+// 
 // 1. 分配未使用区间
 //      需要防止重复分配, 需要记录正在使用的未决区间, 完毕(成功填充, 部分填充, 未填充)后移除
 // 1. 区间填充时, 会将数据写入文件, 填充位置记录到区间状态中
 // 1. 区间完毕后, 记录已经填充的区间, 部分填充的区间则需要缩小
 
-class RangeFile
+class RangeFile : public RangeFileMeta
 {
-    int64_t               _sizeHint = 0;
-    int64_t               _sizeTotal = -1;
-    std::set<Range2>      _allocateRanges;
-    std::set<Range2>      _finishedRanges;
-    std::set<Range2>      _availableRanges;
     std::filesystem::path _filename;
-    std::filesystem::path _filename2;
     util::ffile           _file;
     std::recursive_mutex  _mutex;
     std::mutex            _mutexFile;
+    std::mutex            _mutexMeta;
 
 public:
-    RangeFile(int64_t size = -1, int sizeHint = 0x100000)
-        : _sizeHint(sizeHint)
-        , _sizeTotal(size)
-    {}
+    RangeFile(int64_t size = -1, int sizeHint = 0x100000) {
+        _blockHint  = sizeHint;
+        _bytesTotal = size;
+    }
 
     ~RangeFile() {
         if (vaild())
@@ -74,14 +114,15 @@ public:
             _allocateRanges.size()) {
             return false;
         }
-        _sizeHint = sizeHint;
-        _sizeTotal = size;
+        _blockHint = sizeHint;
+        _bytesTotal = size;
+        return true;
     }
 
     // 分配区域并保证不相交
     bool allocate(Range2& range)
     {
-        if (_sizeTotal <= 0)
+        if (_bytesTotal <= 0)
             return {};
 
         std::lock_guard<std::recursive_mutex> locker(_mutex);
@@ -93,12 +134,12 @@ public:
             do
             {
                 last.start = last.end > 0 ? last.end + 1 : 0;
-                last.end = std::min(last.start + _sizeHint - 1, _sizeTotal - 1);
+                last.end = std::min(last.start + _blockHint - 1, _bytesTotal - 1);
                 _availableRanges.insert(last);
 
-                util_assert(last.size() <= _sizeHint);
+                util_assert(last.size() <= _blockHint);
             } 
-            while (last.end < (_sizeTotal - 1));
+            while (last.end < (_bytesTotal - 1));
         }
 
         if (_availableRanges.size() > 0)
@@ -106,7 +147,7 @@ public:
             range = *_availableRanges.begin();
             range.state = Range2::kPending;
             range.position = range.start;
-            util_assert(range.size() <= _sizeHint);
+            util_assert(range.size() <= _blockHint);
 
             _allocateRanges.insert(range);
             _availableRanges.erase(_availableRanges.begin());
@@ -184,13 +225,16 @@ public:
             if (ecode)
                 return !(error = util::MakeErrorFromNative(ecode.value(), filename, util::kFilesystemError));
 
-            auto temp = filename.wstring() + L".temp";
+            auto temp = std::filesystem::path(filename) += L".temp";;
+            auto meta = std::filesystem::path(filename) += L".meta";
             auto file = util::file_open(temp, O_CREAT | O_RDWR);
             auto size = util::file_size(file);
 
-            if (size != _sizeTotal && _sizeTotal > 0)
+            // 文件总大小有效, 则文件被设置为同等大小.
+            // 文件总大小无效, 则文件被截断为0.
+            if (size != _bytesTotal)
             {
-                util::file_seek(file, _sizeTotal, 0);
+                util::file_seek(file, std::max<int64_t>(_bytesTotal, 0), 0);
 
                 // If the function succeeds, the return value is nonzero.
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setendoffile
@@ -199,17 +243,67 @@ public:
                     throw util::ferror(::GetLastError(), "SetEndOfFile() failed");
 
                 util::file_seek(file, 0, 0);
+
+                // 调整了文件大小, 则尝试删除可能的元数据文件, 并忽略错误
+                util::ferror ferr;
+                if (util::file_exist(meta, ferr))
+                    util::file_remove(meta, ferr);
+            }
+            else if (_bytesTotal > 0)
+            {
+                if (util::file_exist(meta))
+                {
+                    // 大小有效 且 文件大小没有被调整, 尝试打开同步上一次的元数据
+                    RangeFileMeta archive = {};
+                    try
+                    {
+                        std::ifstream is(meta);
+                        boost::archive::binary_iarchive ia(is);
+                        ia >> archive;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        NLOG_WAR("open({1}) failed to synchronize metadata, error: {2}")
+                            % meta.wstring()
+                            % e.what();
+                        util::file_remove(meta);
+                    }
+
+                    if (archive._blockHint == _blockHint &&
+                        archive._bytesTotal == _bytesTotal)
+                    {
+                        // 恢复状态的话, 先用简单方案处理: 暴力的丢弃所有正在处理的区间
+                        for (auto r : archive._allocateRanges) {
+                            archive._availableRanges.insert({ r.start, r.end });
+                            archive._bytesProcessed -= (r.position - r.start);
+                        }
+                        archive._allocateRanges.clear();
+
+                        std::list<std::string> text;
+                        for (auto const& r : archive._finishedRanges)
+                            text.push_back(util::sformat("[%08" PRIx64 ", %08" PRIx64 "]", r.start, r.end));
+                        NLOG_PRO("open() Restore the previous status: finished: {1}, available: {2}")
+                            % archive._finishedRanges.size()
+                            % archive._availableRanges.size();
+                        NLOG_PRO(" - Finished: ") << boost::join(text, ", ");
+                        NLOG_PRO(" - BytesProcessed: ") << archive._bytesProcessed;
+
+                        std::lock_guard<std::recursive_mutex> locker(_mutex);
+                        _bytesProcessed = archive._bytesProcessed;
+                        _finishedRanges = std::move(archive._finishedRanges);
+                        _availableRanges = std::move(archive._availableRanges);
+                    }
+                }
             }
 
             _file = file;
             _filename = filename;
-            _filename2 = temp;
-
-            // TODO
-            // 读取mate文件, 恢复断点
         }
         catch (const util::ferror& ferr)
         {
+            NLOG_ERR("open({1}) failed, error: {2}")
+                % _filename.wstring()
+                % ferr.message();
             return !(error = util::MakeErrorFromNative(ferr.code(), filename, util::kFilesystemError));
         }
 
@@ -229,13 +323,25 @@ public:
 
         if (finished)
         {
-            if (_sizeTotal > 0 && !is_full())
+            if (_bytesTotal > 0 && !is_full())
                 return !(error = util::MakeError(util::kInvalidParam));
 
-            util::ferror ferr;
-            util::file_move(_filename2, _filename, ferr);
-            if (ferr)
-                return !(error = util::MakeErrorFromNative(ferr.code(), _filename2, util::kFilesystemError));
+            auto file = _filename;
+            try
+            {
+                file += ".temp";
+                util::file_move(file, _filename);
+
+                file += ".meta";
+                util::file_remove(file);
+            }
+            catch (const util::ferror& ferr)
+            {
+                NLOG_ERR("close({1}) failed, error: {2}")
+                    % file.wstring()
+                    % ferr.message();
+                return !(error = util::MakeErrorFromNative(ferr.code(), file, util::kFilesystemError));
+            }
         }
 
         {
@@ -244,9 +350,50 @@ public:
             _finishedRanges.clear();
             _availableRanges.clear();
         }
-
+        _blockHint = 0x100000;
+        _bytesTotal = -1;
+        _bytesProcessed = 0;
         _filename.clear();
-        _filename2.clear();
+
+        return !error;
+    }
+
+    bool dump(std::error_code& error)
+    {
+        error.clear();
+        try
+        {
+            RangeFileMeta archive = {};
+            {
+                std::lock_guard<std::recursive_mutex> locker(_mutex);
+                archive = *static_cast<RangeFileMeta*>(this);
+            }
+
+            util::bytedata bytes;
+            util::bytes_serialize(bytes, archive);
+            
+            try
+            {
+                auto meta = std::filesystem::path(_filename) += L".meta";
+                std::lock_guard<std::mutex> locker(_mutexMeta);
+                util::ffile file = util::file_open(meta, O_CREAT | O_TRUNC | O_WRONLY);
+                util::file_write(file, bytes.data(), static_cast<int>(bytes.size()));
+            }
+            catch (const util::ferror& ferr)
+            {
+                NLOG_ERR("dump() failed, file: {1}.meta, error: {2}")
+                    % _filename.wstring()
+                    % ferr.message();
+                return !(error = util::MakeErrorFromNative(ferr.code(), _filename, util::kFilesystemError));
+            }
+        }
+        catch (const std::exception& e)
+        {
+            NLOG_ERR("dump() failed to synchronize metadata, file: {1}.meta, error: {2}") 
+                % _filename.wstring()
+                % e.what();
+            error = util::MakeError(util::kRuntimeError);
+        }
 
         return !error;
     }
@@ -259,11 +406,17 @@ public:
             if (size <= 0) // 没有可填充的数据
                 return true;
 
-            std::lock_guard<std::mutex> locker(_mutexFile);
-            util::file_write(_file, bytes.data(), size);
+            {
+                std::lock_guard<std::mutex> locker(_mutexFile);
+                util::file_write(_file, bytes.data(), size);
+            }
+            _bytesProcessed += size;
         }
         catch (const util::ferror& ferr)
         {
+            NLOG_ERR("fill() failed, size: {1}, error: {2}")
+                % size
+                % ferr.message();
             error = util::MakeErrorFromNative(ferr.code(), _filename, util::kFilesystemError);
         }
 
@@ -291,8 +444,14 @@ public:
             }
             catch (const util::ferror& ferr)
             {
+                NLOG_ERR("fill() failed, range: {1}, size: {2}, error: {3}")
+                    % util::sformat("[%08" PRIx64 ", %08" PRIx64 ": %d / %06" PRIx64 "]",
+                        range.start, range.end, range.state, range.position)
+                    % size
+                    % ferr.message();
                 return !(error = util::MakeErrorFromNative(ferr.code(), _filename, util::kFilesystemError));
             }
+            _bytesProcessed += size;
 
             // position 是下一个要填充的元素
             range.position = range.position + size;
@@ -307,13 +466,13 @@ public:
                 const_cast<Range2&>(*it).state = range.state;
                 const_cast<Range2&>(*it).position = range.position;
             }
-
-            // TODO
-            // 元数据同步至磁盘
         }
-        catch (const util::ferror& ferr)
+        catch (const std::exception& e)
         {
-            error = util::MakeErrorFromNative(ferr.code(), _filename, util::kFilesystemError);
+            NLOG_ERR("fill() failed, file: {1}, error: {2}")
+                % _filename.wstring()
+                % e.what();
+            error = util::MakeError(util::kRuntimeError);
         }
 
         return !error;
@@ -322,14 +481,18 @@ public:
     bool is_full() const {
         std::lock_guard<std::recursive_mutex> locker(const_cast<std::recursive_mutex&>(_mutex));
         if (_finishedRanges.size() == 1)
-            return *_finishedRanges.cbegin() == Range2{ 0, _sizeTotal - 1 };
+            return *_finishedRanges.cbegin() == Range2{ 0, _bytesTotal - 1 };
         return false;
     }
 
     int64_t size() const {
-        if (_sizeTotal > 0)
-            return _sizeTotal;
+        if (_bytesTotal > 0)
+            return _bytesTotal;
         return 0;
+    }
+
+    int64_t processed() const {
+        return _bytesProcessed;
     }
 };
 

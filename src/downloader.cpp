@@ -219,8 +219,7 @@ bool DownloadFile(
     error.clear();
     try
     {
-        std::atomic_int   flag(kRunning);
-        std::atomic_llong processedBytes(0);
+        std::atomic_int flag(kRunning);
 
         NLOG_PRO("DownloadFile({{1}}) ...") % config.connections;
         NLOG_PRO(" - URL : ") << url;
@@ -307,13 +306,28 @@ bool DownloadFile(
             return !error;
         }
 
-        auto worker = [&](std::error_code& error)
+        // 工作线程状态
+        struct State {
+            enum { 
+                kThreadNone = 0, 
+                kThreadRunning, 
+                kThreadFinished, 
+                kThreadInterrupted 
+            };
+            int flag = kThreadNone;
+            std::error_code error;
+        };
+
+        auto worker = [&](State& state)
         {
+            state.flag = State::kThreadRunning;
             NLOG_APP("Worker start: {1}") % std::this_thread::get_id();
             util_scope_exit = [&] {
+                state.flag = state.error ? State::kThreadInterrupted 
+                                         : State::kThreadFinished;
                 NLOG_APP("Worker finished: {1}, result: {2}")
                     % std::this_thread::get_id()
-                    % error.message();
+                    % state.error.message();
             };
 
             try 
@@ -333,36 +347,41 @@ bool DownloadFile(
                         [&](const std::string& data, intptr_t userdata) -> bool
                         {
                             rf.fill(range, data, data.size(), ecode);
-                            processedBytes += data.size();
                             return !ecode && flag == kRunning;
                         } });
 
                     auto response = session->Get();
-                    if (HandleRequestError(response, ecode, flag, error))
-                        return !error;
+                    if (HandleRequestError(response, ecode, flag, state.error))
+                        return;
                 }
             }
             catch (const std::exception& e)
             {
                 NLOG_ERR("Unhandled exception: ") << e.what();
+                state.error = util::MakeError(util::kRuntimeError);
             }
         };
 
-        std::vector<std::error_code> ecodes(config.connections);
+        std::vector<State> states(config.connections);
         std::vector<std::shared_ptr<std::thread>> threads;
         for (int i = 0; i < config.connections; ++i)
-            threads.push_back(std::make_shared<std::thread>(worker, std::ref(ecodes[i])));
+            threads.push_back(std::make_shared<std::thread>(worker, std::ref(states[i])));
 
-        // 等待执行完毕
+        size_t threadIndex = 0;
         while (flag.load() == kRunning && !rf.is_full())
         {
-            // TODO 若存在部分线程已经退出, 并且没有错误, 这里可能会发生死循环
-            // 需要处理
-            if (ecodes[0]) // 存在错误
+            // 在下载阶段的尾声, 部分线程开始陆续退出, 此时不会设置错误
+            // 因此, 在检测是否发生错误时, 要排除正常结束的线程.
+            if (states[threadIndex].flag == State::kThreadFinished) {
+                if (++threadIndex >= states.size())
+                    break;
+            }
+
+            if (states[threadIndex].error) // 存在错误
             {
                 std::map<int, int> counts;
-                for (auto e : ecodes)
-                    counts[e.value()]++;
+                for (auto& s : states)
+                    counts[s.error.value()]++;
                 if (counts.count(util::kSucceed) == 0) // 所有连接均出错
                 {
                     std::pair<int, int> item;
@@ -382,13 +401,18 @@ bool DownloadFile(
 
             if (callback)
             {
-                if (!callback({ attribute.contentLength, processedBytes }))
+                if (!callback({ attribute.contentLength, rf.processed() }))
                 {
                     flag  = kCancelled;
                     error = util::MakeError(util::kOperationInterrupted);
                     break;
                 }
             }
+
+            std::error_code ecode;
+            if (!rf.dump(ecode))
+                NLOG_WAR("RangeFile::save_meta() failed, error: ") << ecode.message();
+
             std::this_thread::sleep_for(std::chrono::milliseconds(config.interval));
         }
 
