@@ -332,6 +332,7 @@ public:
                 file += ".temp";
                 util::file_move(file, _filename);
 
+                file =  _filename;
                 file += ".meta";
                 util::file_remove(file);
             }
