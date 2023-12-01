@@ -256,7 +256,7 @@ bool DownloadFile(
         RangeFile rf;
         util_scope_exit = [&] {
             std::error_code ecode;
-            if (!rf.close(!error, ecode)) {
+            if (rf && !rf.close(!error, ecode)) {
                 error = error ? error :ecode; // 若关闭前有错误, 则不改变之前的错误
                 NLOG_ERR("RangeFile::close() failed, error: ") << ecode.message();
             }
