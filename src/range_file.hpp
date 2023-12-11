@@ -15,8 +15,8 @@
 #include <filesystem>
 
 #include "config.h"
+#include "uerror.h"
 #include "range.hpp"
-#include "base_error.hpp"
 #include "common/scope.hpp"
 #include "common/assert.hpp"
 #include "common/bytedata.hpp"
@@ -40,7 +40,7 @@ struct Range2 : public Range {
 };
 
 //
-// 区间化文件的元数据, 用于状态的序列化, 由于它应该是
+// 区间化文件的元数据, 用于状态的序列化
 //
 struct RangeFileMeta {
     int64_t          _blockHint = 0;
@@ -497,13 +497,15 @@ public:
     }
 };
 
+//
+// 简易的单元测试
+//
 #if DEBUG || _DEBUG
 
 #include <random>
 #include <iostream>
 #include "string/string_util.h"
 
-// 重载 << 运算符  
 inline std::ostream& operator<<(std::ostream& os, const Range2& br) {
     return os << (util::sformat("[%08" PRIx64 ", %08" PRIx64 ": %d / %06" PRIx64 "]", 
         br.start, br.end, br.state, br.position));

@@ -1,13 +1,13 @@
-// This file is part of the error.hpp
+// This file is part of the uerror.h
 //
 // Copyright (c) 2018-2023, zero.kwok@foxmail.com
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-#ifndef base_error_ipp__
-#define base_error_ipp__
+#ifndef uerror_cpp__
+#define uerror_cpp__
 
-#include "base_error.hpp"
+#include "uerror.h"
 #include <filesystem/path_util.h>
 #include <platform/platform_util.h>
 
@@ -21,7 +21,7 @@ namespace util {
 std::error_code MakeErrorFromNative(
     const int ecode,
     const std::filesystem::path& filename,
-    const BaseError defaultCode)
+    const Error defaultCode)
 {
     switch (ecode)
     {
@@ -82,4 +82,4 @@ std::error_code MakeErrorFromNative(
 
 } // namespace util
 
-#endif // base_error_ipp__
+#endif // uerror_cpp__

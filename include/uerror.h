@@ -1,11 +1,11 @@
-// This file is part of the error.hpp
+// This file is part of the uerror.h
 //
 // Copyright (c) 2018-2023, zero.kwok@foxmail.com
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-#ifndef base_error_h__
-#define base_error_h__
+#ifndef uerror_h__
+#define uerror_h__
 
 #include <filesystem>
 #include <system_error>
@@ -13,7 +13,7 @@
 
 namespace util {
 
-    enum BaseError : int
+    enum Error : int
     {
         kSucceed                             = 0x00, //!< 成功
         kUnknownError                        = 0x01, //!< 未知错误
@@ -42,20 +42,20 @@ namespace util {
     };
 
     //!
-    //! BaseErrorCategory
+    //! ErrorCategory
     //!
-    class BaseErrorCategory : public std::error_category {
+    class ErrorCategory : public std::error_category {
         public:
-        static BaseErrorCategory& Instance() {
-            static BaseErrorCategory _imp;
+        static ErrorCategory& Instance() {
+            static ErrorCategory _imp;
             return _imp;
         }
 
-        virtual const char* name() const noexcept { return "BaseError"; }
+        virtual const char* name() const noexcept { return "Error"; }
         virtual std::string message(int ev) const {
             if (ev == kSucceed)
                 return "Succeed";
-            return util::sformat("BaseError: 0x%08x", ev);
+            return util::sformat("Error: 0x%08x", ev);
         }
     };
 
@@ -64,7 +64,7 @@ namespace util {
     //! @return 返回cpp错误码对象.
     inline std::error_code MakeError(int ecode) {
         return std::error_code(
-            static_cast<int>(ecode), BaseErrorCategory::Instance());
+            static_cast<int>(ecode), ErrorCategory::Instance());
     }
 
     //! @brief 通过本地系统错误码创建标准错误码对象.
@@ -75,8 +75,8 @@ namespace util {
     std::error_code MakeErrorFromNative(
         const int ecode,
         const std::filesystem::path& filename = {},
-        const BaseError defaultCode = kRuntimeError);
+        const Error defaultCode = kRuntimeError);
 
 } // namespace util
 
-#endif // base_error_h__
+#endif // uerror_h__

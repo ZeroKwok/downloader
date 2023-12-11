@@ -81,6 +81,9 @@ struct Range
     }
 };
 
+//
+// 简易的单元测试
+//
 #if DEBUG || _DEBUG
 inline void UtilTestForClassRange()
 {
@@ -174,6 +177,5 @@ inline void UtilTestForClassRange()
     util_assert(range4.size() == 6);
 }
 #endif
-
 
 #endif // range_h__
