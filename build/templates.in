@@ -1,0 +1,10 @@
+#! python
+# -*- coding: utf-8 -*-
+
+import sys
+sys.path.append('${CMAKE_SOURCE_DIR}')
+import FTBuildSettings as builder
+
+MakeOptions1 = builder.SetProject('${PROJECT_NAME}', '${PROJECT_VERSION}', __file__)
+MakeOptions2 = { }
+builder.Build(MakeOptions1, MakeOptions2)
