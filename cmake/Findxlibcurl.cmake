@@ -1,11 +1,8 @@
-# This file is part of the MBackupper projects.
+# This file is part of the downloader projects.
 # 
-# Copyright (c) 2018-2023, MBackupper Teams
+# Copyright (c) 2018-2023, zero.kwok@foxmail.com
 # For the full copyright and license information, please view the LICENSE
 # file that was distributed with this source code.
-# 
-# Author:  GuoJH
-# Contact: zero.kwok@foxmail.com
 
 set(_PACKAGE_NAME    "curl")
 set(_PACKAGE_VERSION "${${_PACKAGE_NAME}_FIND_VERSION}")
