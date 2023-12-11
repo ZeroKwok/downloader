@@ -1,3 +1,9 @@
+# This file is part of the downloader library
+#
+# Copyright (c) 2018-2023, zero.kwok@foxmail.com
+# For the full copyright and license information, please view the LICENSE
+# file that was distributed with this source code.
+
 cmake_policy(SET CMP0074 NEW)
 cmake_minimum_required(VERSION 3.13)
 
@@ -45,13 +51,20 @@ link_directories   (${utility_LIBRARY_DIRS})
 include_directories(${Boost_INCLUDE_DIRS})
 link_directories   (${Boost_LIBRARY_DIRS})
 
-file(GLOB INCLUDE_FILES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
+#file(GLOB INCLUDE_FILES 
+#    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
+#    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
+#
+#file(GLOB SOURCE_FILES 
+#    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
+#    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 
-file(GLOB SOURCE_FILES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+set(INCLUDE_FILES 
+    "include/uerror.h"
+    "include/downloader.h")
+set(SOURCE_FILES 
+    "src/uerror.cpp"
+    "src/downloader.cpp")
 
 add_library(${PROJECT_NAME} STATIC ${SOURCE_FILES} ${INCLUDE_FILES})
 
