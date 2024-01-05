@@ -12,6 +12,7 @@
 #include "cpr/cpr.h"
 #include "common/scope.hpp"
 #include "common/assert.hpp"
+#include "platform/platform_util.h"
 #include <boost/algorithm/string.hpp>
 
 std::shared_ptr<cpr::Session> MakeSession(const cpr::Url& url)
@@ -196,6 +197,11 @@ bool HandleRequestError(
             return true;
         }
 
+        if (503 == response.status_code) { // 服务不可用
+            error = util::MakeError(util::kServerError);
+            return true;
+        }
+
         if (400 <= response.status_code) { // 下载错误
             NLOG_ERR("Request Error: {1}, {2}")
                 % response.status_code
@@ -343,14 +349,23 @@ bool DownloadFile(
 
                     std::error_code ecode;
                     session->SetOption(cpr::Range{ range.start, range.end });
+
+#if 0
+                    //
+                    // 有的服务器可能会在下载过程中返回错误信息, 此时下载的内容并不是文件内容
+                    // 因此不能直接写入文件
                     session->SetWriteCallback(cpr::WriteCallback{
                         [&](const std::string& data, intptr_t userdata) -> bool
                         {
                             rf.fill(range, data, data.size(), ecode);
                             return !ecode && flag == kRunning;
                         } });
+#endif
 
                     auto response = session->Get();
+                    if (response.status_code == 200 || response.status_code == 206)
+                        rf.fill(range, response.text, response.text.size(), ecode);
+
                     if (HandleRequestError(response, ecode, flag, state.error))
                         return;
                 }
