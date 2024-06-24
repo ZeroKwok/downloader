@@ -15,7 +15,7 @@
 #include "platform/platform_util.h"
 #include <boost/algorithm/string.hpp>
 
-std::shared_ptr<cpr::Session> MakeSession(const cpr::Url& url)
+static inline std::shared_ptr<cpr::Session> MakeSession(const cpr::Url& url)
 {
     auto session = std::make_shared<cpr::Session>();
     session->SetUrl(url);
@@ -28,7 +28,7 @@ std::shared_ptr<cpr::Session> MakeSession(const cpr::Url& url)
     return session;
 }
 
-inline size_t WriteHeadCallback(char* buffer, size_t size, size_t nitems, file_attribute* attribute) {
+static inline size_t WriteHeadCallback(char* buffer, size_t size, size_t nitems, file_attribute* attribute) {
     size *= nitems;
     if (strncmp(buffer, "Accept-Ranges:", 14) == 0)
         attribute->acceptRanges = boost::algorithm::trim_copy(std::string(buffer + 14, size - 14));
