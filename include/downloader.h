@@ -29,6 +29,7 @@ struct download_preference
     int connections = 4;            //!< 下载连接数
     int interval    = 1000 / 10;    //!< 状态汇报的间隔时长(毫秒), 单连接下载时失效
     int blockSize   = 1024 * 1024;  //!< 连接分块传输的大小, 单连接下载时失效
+    int timeout     = 5000;         //!< 请求的超时时间
 };
 
 //! @brief 下载文件
@@ -43,6 +44,16 @@ bool DownloadFile(
     const std::filesystem::path& filename,
     const std::function<bool(const download_status&)>& callback,
     const download_preference config,
+    std::error_code& error);
+
+//! @brief 请求内容
+//! @param url
+//! @param data 请求到的数据
+//! @param error 失败时将包含具体的错误原因(BaseError)
+//! @return HTTP response status codes
+int RequestContent(
+    const std::string& url,
+    std::string& data,
     std::error_code& error);
 
 //!

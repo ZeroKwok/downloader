@@ -276,7 +276,7 @@ bool DownloadFile(
             NLOG_PRO("Direct download ...");
 
             // 未知大小 or 长度太短 or 不支持范围请求, 只能单点下载
-            session1->SetConnectTimeout(5000);
+            session1->SetConnectTimeout(config.timeout);
             session1->SetProgressCallback(cpr::ProgressCallback(
                 [&](cpr::cpr_off_t downloadTotal,
                     cpr::cpr_off_t downloadNow,
@@ -441,4 +441,31 @@ bool DownloadFile(
     NLOG_PRO("Download() finished, result: {1}") % error.message();
 
     return !error;
+}
+
+int RequestContent(
+    const std::string& url,
+    std::string& data,
+    std::error_code& error)
+{
+    error.clear();
+    try
+    {
+        auto session1 = MakeSession(url);
+        session1->SetConnectTimeout(8000);
+        auto response = session1->Get();
+
+        if (response.status_code == 200)
+            data = std::move(response.text);
+        else
+            HandleRequestError(response, {}, kFailed, error);
+
+        return response.status_code;
+    }
+    catch (const std::exception& e)
+    {
+        NLOG_ERR("Unhandled exception: ") << e.what();
+    }
+
+    return -1;
 }
