@@ -219,11 +219,14 @@ public:
         error.clear();
         try
         {
-            std::error_code ecode;
-            if (!std::filesystem::exists(filename.parent_path(), ecode))
-                std::filesystem::create_directories(filename.parent_path(), ecode);
-            if (ecode)
-                return !(error = util::MakeErrorFromNative(ecode.value(), filename, util::kFilesystemError));
+            if (filename.has_parent_path())
+            {
+                std::error_code ecode;
+                if (!std::filesystem::exists(filename.parent_path(), ecode))
+                    std::filesystem::create_directories(filename.parent_path(), ecode);
+                if (ecode)
+                    return !(error = util::MakeErrorFromNative(ecode.value(), filename, util::kFilesystemError));
+            }
 
             auto temp = std::filesystem::path(filename) += L".temp";;
             auto meta = std::filesystem::path(filename) += L".meta";
