@@ -249,6 +249,7 @@ bool DownloadFile(
                 if (!GetFileAttribute(attribute, url, config.timeout, error))
                     if (error.value() != util::kNetworkError)
                         return !error;
+                break;
             }
             while (--tryCount > 0);
 
@@ -300,8 +301,12 @@ bool DownloadFile(
                 }));
 
             rf.reserve(attribute.contentLength);
-            if (!rf.open(filename, error))
+            if (!rf.open(filename, error)) {
+                NLOG_ERR("rf.open({1}) failed, error: {2}")
+                    % filename.wstring()
+                    % error.message();
                 return !error;
+            }
 
             std::error_code ecode;
             auto response = session1->Download(cpr::WriteCallback{
@@ -310,6 +315,17 @@ bool DownloadFile(
                 }});
             HandleRequestError(response, ecode, flag, error);
 
+            if (response.status_code != 200 || error)
+            {
+                NLOG_ERR("Direct download failed, status code: {1}, error: {2}")
+                    % response.status_code
+                    % error.message();
+            }
+            else
+            {
+                NLOG_PRO("Direct download finished, status code: {1}")
+                    % response.status_code;
+            }
             return !error;
         }
 
