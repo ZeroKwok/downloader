@@ -9,7 +9,7 @@ cmake_minimum_required(VERSION 3.13)
 
 project(downloader VERSION 0.2.1.0)
 
-option(DOWNLOADER_BUILD_EXAMPLE "Whether to compile the example project" ON)
+option(DOWNLOADER_BUILD_TOOLS "Enable to build the tools" ON)
 option(DOWNLOADER_STATIC_RUNTIME "Enable link with runtime statically" OFF)
 
 if(MSVC AND DOWNLOADER_STATIC_RUNTIME)
@@ -43,14 +43,6 @@ link_directories   (${utility_LIBRARY_DIRS})
 include_directories(${Boost_INCLUDE_DIRS})
 link_directories   (${Boost_LIBRARY_DIRS})
 
-#file(GLOB INCLUDE_FILES 
-#    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
-#    "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp")
-#
-#file(GLOB SOURCE_FILES 
-#    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
-#    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-
 set(INCLUDE_FILES 
     "include/uerror.h"
     "include/downloader.h")
@@ -74,11 +66,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include>)
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER "${INCLUDE_FILES}")
 
-#
-# 注意 LNK4217 错误, 环境中头文件目录包含x86-windows, 因此在静态运行时中libcurl会包含导入dllimport.
-# 
 target_link_libraries(${PROJECT_NAME} PUBLIC xcpr xlibcurl xzlib)
-
 if(DOWNLOADER_STATIC_RUNTIME)
     target_link_libraries(${PROJECT_NAME} PUBLIC libnlog)
 else()
@@ -105,8 +93,8 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.md DESTINATION ./ OPTIONAL)
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/example DESTINATION ./)
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/cmake DESTINATION ./)
 
-if(DOWNLOADER_BUILD_EXAMPLE)
-    add_subdirectory(example)
+if(DOWNLOADER_BUILD_TOOLS)
+    add_subdirectory(tools)
 endif()
 
 if (NOT ${CMAKE_CURRENT_SOURCE_DIR} STREQUAL ${CMAKE_SOURCE_DIR})

@@ -6,6 +6,7 @@
 
 #include <nlog.h>
 #include <signal.h>
+#include <conio.h>
 #include "downloader.h"
 #include "common/assert.hpp"
 #include "common/digest.hpp"
@@ -31,15 +32,15 @@ void BreakCallback(int signum)
     signal(signum, BreakCallback);
 }
 
-int main()
+int main(int argc, char** argv)
 {
-    //text1();
-    //text();
-    //UtilTestForClassRange();
-    //UtilTestForClassRangeFile();
+    if (argc < 2) {
+        std::cerr << "Using download.exe <url> [file] [timeout] [connections]" << std::endl;
+        return -2;
+    }
 
     NLOG_CFG cfg = {
-        L"",
+        util::path_from_temp("DownloadLogs"),
         L"download-%m%d%H%M.log",
         L"",
         L"[{time}][{level}][{id}][{file}:{line}]: "
@@ -47,37 +48,55 @@ int main()
     NLOG_SET_CONFIG(cfg);
     signal(SIGBREAK, BreakCallback);
 
-    auto file1 = "https://secure-appldnld.apple.com/itunes12/001-80042-20210422-E8A351F2-A3B2-11EB-9A8F-CF1B67FC6302/iTunesSetup.exe";
-    auto file2 = "https://updates.cdn-apple.com/ASU/032-71981-20230602-DC0154EB-2A7F-4411-B820-C78298A03DE3/AppleServiceUtilityCustomer.dmg";
-    auto file3 = "http://localhost:3000/download/setup.exe";
-    auto file4 = "http://localhost:3000/download2/setup.exe";
-    auto file5 = "http://www2.aomeisoftware.com/download/ftl/FoneTool_free.exe";
-    auto file6 = "http://192.168.3.104:8000/FoneTool_install.exe";
-    auto file7 = "https://www2.aomeisoftware.com/download/testing-env/FoneTool_free.exe";
-    auto file8 = "http://192.168.4.199/FTpackage/FoneTool_setup.exe";
-    auto file9 = "https://updates.cdn-apple.com/2023WinterFCS/fullrestores/032-73607/808823C0-47DB-4F13-9E26-4AEB735FD900/iPhone_5.5_15.7.6_19H349_Restore.ipsw";
+    std::error_code ecode;
+    std::string url  = argv[1];
+    std::string file = argc > 2 ? argv[2] : util::path_find_filename(url);
 
-    auto url = file9;
-    std::filesystem::path directory = LR"(J:\Temp)";
-    std::filesystem::path file = directory / util::path_find_filename(url);
+    download_preference preference;
+    if (argc > 3)
+    {
+        char* tail = nullptr;
+        preference.timeout = strtoull(argv[3], &tail, 10);
+        if (tail && (tail[0] != '\0')) {
+            std::cerr << "Using download.exe <url> [file] [timeout] [connections]" << std::endl;
+            return -2;
+        }
+    }
+
+    if (argc > 4)
+    {
+        char* tail = nullptr;
+        preference.connections = strtoull(argv[4], &tail, 10);
+        if (tail && (tail[0] != '\0')) {
+            std::cerr << "Using download.exe <url> [file] [timeout] [connections]" << std::endl;
+            return -2;
+        }
+    }
+
+    //_getch();
+    NLOG_APP(" download.exe argc: %d", argc);
+    NLOG_APP(" - URL: ") << url;
+    NLOG_APP(" - File: ") << file;
+    NLOG_APP(" - Timeout: ") << preference.timeout;
+    NLOG_APP(" - Connections: ") << preference.connections;
 
     auto pos = util::win::cursor_pos();
-
-    std::error_code ecode;
     DownloadFile(url, file, [=](const download_status& status)->bool
         {
             util::win::cursor_goto(pos);
             util::win::output_progress(status.processedBytes * 100.0 / status.totalBytes);
             return gFlags == kFlagRunning;
         },
-        {}, ecode);
+        preference, ecode);
 
     std::cout << std::endl;
     if (ecode)
-        std::cout << "download_file() failed, error: " << ecode.message() << std::endl;
+    {
+        std::cerr << "Download failed, error: " << ecode.message() << std::endl;
+    }
     else
     {
-        std::cout << "download_file() filished!" << std::endl;
+        std::cout << "Download finished!" << std::endl;
 
         auto pos1 = util::win::cursor_pos();
         auto block = 1024 * 512;
@@ -91,10 +110,8 @@ int main()
             });
 
         std::cout << std::endl;
-        std::cout << "file_sha1_digest() -> " << util::bytes_into_hex(digest) << std::endl;
+        std::cout << "SHA1: " << util::bytes_into_hex(digest) << std::endl;
     }
-
-    ::system("pause");
 
     return 0;
 }
