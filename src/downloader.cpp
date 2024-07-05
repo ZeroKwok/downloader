@@ -21,7 +21,7 @@ static inline std::shared_ptr<cpr::Session> MakeSession(const cpr::Url& url)
     session->SetUrl(url);
     session->SetOption(cpr::Redirect{});
     session->SetOption(cpr::VerifySsl{ false });
-    session->SetConnectTimeout(1500);
+    session->SetConnectTimeout(3000);
     session->SetHeader(cpr::Header{
         {"Connection", "keep-alive"}
         });
@@ -40,6 +40,15 @@ static inline size_t WriteHeadCallback(char* buffer, size_t size, size_t nitems,
 
 bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::error_code& error)
 {
+    return GetFileAttribute(attribute, url, 3000, error);
+}
+
+bool GetFileAttribute(
+    file_attribute& attribute,
+    const std::string& url,
+    int timeout,
+    std::error_code& error)
+{
     error.clear();
     attribute = {};
     try
@@ -52,7 +61,7 @@ bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::er
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_HTTPGET, 1);
         curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1500);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, timeout);
 
         cpr::VerifySsl verify{ false };
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, verify ? 1L : 0L);
@@ -237,10 +246,10 @@ bool DownloadFile(
             int tryCount = 5;
             do 
             {
-                if (!GetFileAttribute(attribute, url, error))
+                if (!GetFileAttribute(attribute, url, config.timeout, error))
                     if (error.value() != util::kNetworkError)
                         return !error;
-            } 
+            }
             while (--tryCount > 0);
 
             if (error) // 重试后仍不成功

@@ -70,8 +70,10 @@ struct file_attribute
 //! @brief 请求文件属性
 //! @param attribute 输出的文件属性.
 //! @param url 文件 url
+//! @param timeout 超时时间, 毫秒
 //! @param error 失败时将包含具体的错误原因(BaseError)
 //! @return 成功返回true, 否则失败
 bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::error_code& error);
+bool GetFileAttribute(file_attribute& attribute, const std::string& url, int timeout, std::error_code& error);
 
 #endif // downloader_h__
