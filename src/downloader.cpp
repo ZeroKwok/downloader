@@ -236,9 +236,13 @@ bool DownloadFile(
     {
         std::atomic_int flag(kRunning);
 
-        NLOG_PRO("DownloadFile({{1}}) ...") % config.connections;
+        NLOG_PRO("DownloadFile() ...");
         NLOG_PRO(" - URL : ") << url;
         NLOG_PRO(" - File: ") << filename;
+        NLOG_PRO(" - TimeOut(MS): ") << config.timeout;
+        NLOG_PRO(" - Connections: ") << config.connections;
+        NLOG_PRO(" - BlockSize: ") << config.blockSize;
+        NLOG_PRO(" - Interval: ") << config.interval;
 
         file_attribute attribute = {};
         if (config.connections > 1) //  单点下载不用探测文件长度
@@ -254,7 +258,10 @@ bool DownloadFile(
             while (--tryCount > 0);
 
             if (error) // 重试后仍不成功
+            {
+                NLOG_ERR("DownloadFile() failed, error: ") << error.message();
                 return !error;
+            }
 
             NLOG_PRO("GetFileAttribute() -> {1}\r\n{2}")
                 % attribute.contentLength
