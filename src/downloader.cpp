@@ -15,20 +15,31 @@
 #include "platform/platform_util.h"
 #include <boost/algorithm/string.hpp>
 
-static inline std::shared_ptr<cpr::Session> MakeSession(const cpr::Url& url)
+static inline std::shared_ptr<cpr::Session> MakeSession(
+    const cpr::Url& url,
+    std::map<std::string, std::string> header)
 {
     auto session = std::make_shared<cpr::Session>();
     session->SetUrl(url);
     session->SetOption(cpr::Redirect{});
     session->SetOption(cpr::VerifySsl{ false });
     session->SetConnectTimeout(3000);
-    session->SetHeader(cpr::Header{
-        {"Connection", "keep-alive"}
+    session->SetHeader(cpr::Header
+        {
+            {"Connection", "keep-alive"}
         });
+    for (auto& pair : header)
+        session->UpdateHeader({ pair });
+
     return session;
 }
 
-static inline size_t WriteHeadCallback(char* buffer, size_t size, size_t nitems, file_attribute* attribute) {
+static inline size_t WriteHeadCallback(
+    char* buffer, 
+    size_t size,
+    size_t nitems, 
+    file_attribute* attribute) 
+{
     size *= nitems;
     if (strncmp(buffer, "Accept-Ranges:", 14) == 0)
         attribute->acceptRanges = boost::algorithm::trim_copy(std::string(buffer + 14, size - 14));
@@ -40,12 +51,13 @@ static inline size_t WriteHeadCallback(char* buffer, size_t size, size_t nitems,
 
 bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::error_code& error)
 {
-    return GetFileAttribute(attribute, url, 3000, error);
+    return GetFileAttribute(attribute, url, {}, 3000, error);
 }
 
 bool GetFileAttribute(
     file_attribute& attribute,
     const std::string& url,
+    const std::map<std::string, std::string>& header,
     int timeout,
     std::error_code& error)
 {
@@ -82,7 +94,25 @@ bool GetFileAttribute(
             mask |= CURL_REDIR_POST_303;
         curl_easy_setopt(curl, CURLOPT_POSTREDIR, mask);
 
-        // header
+        // header setting
+        curl_slist* chunk = nullptr;
+        for (const auto& item : header) {
+            std::string header_string = item.first;
+            if (item.second.empty()) {
+                header_string += ";";
+            }
+            else {
+                header_string += ": " + item.second;
+            }
+
+            curl_slist* temp = curl_slist_append(chunk, header_string.c_str());
+            if (temp) {
+                chunk = temp;
+            }
+        }
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
+
+        // header handle
         curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, WriteHeadCallback);
         curl_easy_setopt(curl, CURLOPT_HEADERDATA, &attribute);
 
@@ -90,6 +120,8 @@ bool GetFileAttribute(
         curl_easy_setopt(curl, CURLOPT_RANGE, "0-");
 
         CURLcode res = curl_easy_perform(curl);
+        curl_slist_free_all(chunk);
+
         switch (res)
         {
         case CURLE_OK: {
@@ -235,6 +267,7 @@ bool DownloadFile(
     try
     {
         std::atomic_int flag(kRunning);
+        auto start = std::chrono::steady_clock::now();
 
         NLOG_PRO("DownloadFile() ...");
         NLOG_PRO(" - URL : ") << url;
@@ -248,11 +281,24 @@ bool DownloadFile(
         if (config.connections > 1) //  单点下载不用探测文件长度
         {
             int tryCount = 5;
+            int timeout  = config.timeout;
             do 
             {
-                if (!GetFileAttribute(attribute, url, config.timeout, error))
-                    if (error.value() != util::kNetworkError)
-                        return !error;
+                error.clear();
+                if (!GetFileAttribute(attribute, url, config.header, timeout, error))
+                {
+                    if (error.value() == util::kNetworkError)
+                    {
+                        auto elapse = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start).count();
+                        if (elapse < timeout)
+                        {
+                            NLOG_PRO("keep trying ...");
+                            timeout = std::min(timeout - elapse, 500);
+                            continue;
+                        }
+                    }
+                }
                 break;
             }
             while (--tryCount > 0);
@@ -285,7 +331,7 @@ bool DownloadFile(
             }
         };
 
-        auto session1 = MakeSession(url);
+        auto session1 = MakeSession(url, config.header);
         if (attribute.contentLength == -1 || 
             attribute.contentLength <= config.blockSize ||
             attribute.acceptRanges.empty())
@@ -370,7 +416,7 @@ bool DownloadFile(
 
             try 
             {
-                auto session = MakeSession(url);
+                auto session = MakeSession(url, config.header);
 
                 Range2 range;
                 while (flag == kRunning && rf.allocate(range))
@@ -424,25 +470,30 @@ bool DownloadFile(
                     break;
             }
 
-            if (states[threadIndex].error) // 存在错误
+            auto elapse = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count();
+            if (elapse > config.timeout)
             {
-                std::map<int, int> counts;
-                for (auto& s : states)
-                    counts[s.error.value()]++;
-                if (counts.count(util::kSucceed) == 0) // 所有连接均出错
+                if (states[threadIndex].error) // 存在错误
                 {
-                    std::pair<int, int> item;
-                    for (auto p : counts)
-                        item = item.second > p.second ? item : p;
-                    NLOG_ERR("download_file({1}, {2}) failed, error: {3}, count: {4}")
-                        % url
-                        % filename.wstring()
-                        % item.first
-                        % item.second;
+                    std::map<int, int> counts;
+                    for (auto& s : states)
+                        counts[s.error.value()]++;
+                    if (counts.count(util::kSucceed) == 0) // 所有连接均出错
+                    {
+                        std::pair<int, int> item;
+                        for (auto p : counts)
+                            item = item.second > p.second ? item : p;
+                        NLOG_ERR("download_file({1}, {2}) failed, error: {3}, count: {4}")
+                            % url
+                            % filename.wstring()
+                            % item.first
+                            % item.second;
 
-                    flag  = kFailed;
-                    error = util::MakeError(item.first);
-                    break;
+                        flag = kFailed;
+                        error = util::MakeError(item.first);
+                        break;
+                    }
                 }
             }
 
@@ -477,13 +528,14 @@ bool DownloadFile(
 
 int RequestContent(
     const std::string& url,
+    std::map<std::string, std::string> header,
     std::string& data,
     std::error_code& error)
 {
     error.clear();
     try
     {
-        auto session1 = MakeSession(url);
+        auto session1 = MakeSession(url, header);
         session1->SetConnectTimeout(8000);
         auto response = session1->Get();
 

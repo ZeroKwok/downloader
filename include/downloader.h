@@ -30,6 +30,9 @@ struct download_preference
     int interval    = 1000 / 10;    //!< 状态汇报的间隔时长(毫秒), 单连接下载时失效
     int blockSize   = 1024 * 1024;  //!< 连接分块传输的大小, 单连接下载时失效
     int timeout     = 5000;         //!< 请求的超时时间
+
+    //! 请求头
+    std::map<std::string, std::string> header;
 };
 
 //! @brief 下载文件
@@ -53,6 +56,7 @@ bool DownloadFile(
 //! @return HTTP response status codes
 int RequestContent(
     const std::string& url,
+    const std::map<std::string, std::string>& header,
     std::string& data,
     std::error_code& error);
 
@@ -74,6 +78,11 @@ struct file_attribute
 //! @param error 失败时将包含具体的错误原因(BaseError)
 //! @return 成功返回true, 否则失败
 bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::error_code& error);
-bool GetFileAttribute(file_attribute& attribute, const std::string& url, int timeout, std::error_code& error);
+bool GetFileAttribute(
+    file_attribute& attribute, 
+    const std::string& url, 
+    const std::map<std::string, std::string>& header,
+    int timeout, 
+    std::error_code& error);
 
 #endif // downloader_h__
