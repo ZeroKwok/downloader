@@ -12,3 +12,5 @@ add_executable(${PROJECT_NAME} "download.cpp")
 target_compile_definitions(${PROJECT_NAME} PRIVATE UTILITY_SUPPORT_BOOST)
 target_link_libraries(${PROJECT_NAME} PRIVATE downloader)
 set_target_properties(${PROJECT_NAME} PROPERTIES DEBUG_POSTFIX "d")
+
+install(TARGETS ${PROJECT_NAME} EXPORT ${PROJECT_NAME} RUNTIME DESTINATION bin)
