@@ -280,10 +280,10 @@ bool DownloadFile(
         file_attribute attribute = {};
         if (config.connections > 1) //  单点下载不用探测文件长度
         {
-            int tryCount = 5;
             int timeout  = config.timeout;
             do 
             {
+                // 当 SSL/TLS 握手失败时, 将突破 CONNECTTIMEOUT 超时限制, 因此这里需要加入重试机制
                 error.clear();
                 if (!GetFileAttribute(attribute, url, config.header, timeout, error))
                 {
@@ -291,17 +291,18 @@ bool DownloadFile(
                     {
                         auto elapse = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
                             std::chrono::steady_clock::now() - start).count();
-                        if (elapse < timeout)
+                        if (elapse < config.timeout)
                         {
-                            NLOG_PRO("keep trying ...");
-                            timeout = std::min(timeout - elapse, 500);
+                            timeout = std::max(config.timeout - elapse, 500);
+
+                            NLOG_PRO("keep trying, timeout: {1} ...") % timeout;
                             continue;
                         }
                     }
                 }
                 break;
             }
-            while (--tryCount > 0);
+            while (1);
 
             if (error) // 重试后仍不成功
             {
