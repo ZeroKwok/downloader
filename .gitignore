@@ -1,4 +1,3 @@
 .vs
-bin
-discard
-installed
+build/*
+!build/templates.in
