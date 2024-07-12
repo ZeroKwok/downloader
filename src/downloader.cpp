@@ -294,7 +294,6 @@ bool DownloadFile(
                         if (elapse < config.timeout)
                         {
                             timeout = std::max(config.timeout - elapse, 500);
-
                             NLOG_PRO("keep trying, timeout: {1} ...") % timeout;
                             continue;
                         }
@@ -362,12 +361,33 @@ bool DownloadFile(
                 return !error;
             }
 
-            std::error_code ecode;
-            auto response = session1->Download(cpr::WriteCallback{
-                [&](const std::string& data, intptr_t userdata) -> bool {
-                    return rf.fill(data, data.size(), ecode);
-                }});
-            HandleRequestError(response, ecode, flag, error);
+            cpr::Response response;
+            do 
+            {
+                std::error_code ecode;
+                response = session1->Download(cpr::WriteCallback{
+                    [&](const std::string& data, intptr_t userdata) -> bool {
+                        return rf.fill(data, data.size(), ecode);
+                    }});
+                HandleRequestError(response, ecode, flag, error);
+
+                if (response.status_code != 200 || error)
+                {
+                    auto elapse = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start).count();
+                    if (elapse < config.timeout)
+                    {
+                        auto timeout = std::max(config.timeout - elapse, 1000);
+                        session1->SetConnectTimeout(timeout);
+
+                        NLOG_PRO("keep trying, timeout: {1} ...") % timeout;
+                        continue;
+                    }
+                }
+
+                break;
+            } 
+            while (1);
 
             if (response.status_code != 200 || error)
             {
