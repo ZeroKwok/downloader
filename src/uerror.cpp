@@ -38,8 +38,9 @@ std::error_code MakeErrorFromNative(
                     auto fname = filename;
                     if (!fs::is_directory(fname))
                         fname = fname.parent_path().lexically_normal();
-                    fs::space_info space = fs::space(fname);
-                    if (!ecode && space.free > 0x200000) // 2MB
+                    std::error_code err;
+                    fs::space_info space = fs::space(fname, err);
+                    if (!err && space.free > 0x200000) // 2MB
                         return MakeError(kFilesystemNotSupportLargeFiles);
                 }
             }
