@@ -15,6 +15,8 @@
 #include "platform/platform_util.h"
 #include <boost/algorithm/string.hpp>
 
+namespace chr = std::chrono;
+
 static inline std::shared_ptr<cpr::Session> MakeSession(
     const cpr::Url& url,
     std::map<std::string, std::string> header)
@@ -179,28 +181,26 @@ enum { kRunning = 0, kFailed, kCancelled };
 // 
 bool HandleRequestError(
     const cpr::Response& response, 
-    const std::error_code& ecode, 
+    const std::error_code& fserr, 
     const std::atomic_int& flag,
     std::error_code& error)
 {
+    if (fserr)
+    {
+        // 因为文件操作错误终止, 归属为致命错误
+        NLOG_ERR("Filesystem Error: {1}, status_code: {2}")
+            % fserr.message()
+            % response.status_code;
+        error = fserr;
+        return true;
+    }
+
     switch (response.error.code)
     {
     case cpr::ErrorCode::REQUEST_CANCELLED:
-        if (ecode)
-        {
-            // 因为错误终止, 在这里几乎都是文件操作, 可以归属为致命错误
-            NLOG_ERR("Request Error: {1}, {2}")
-                % response.status_code
-                % ecode.message();
-            error = ecode;
-        }
-        else
-        {
-            // 操作取消
-            util_assert(flag != kRunning);
-            if (flag == kCancelled) // 只有取消才改写error
-                error = util::MakeError(util::kOperationInterrupted);
-        }
+        util_assert(flag != kRunning);
+        if (flag == kCancelled) // 只有取消才改写error
+            error = util::MakeError(util::kOperationInterrupted);
         return true;
 
         // 余下的错误, 不好判断是否属于致命错误(因为网络错误可能因为重试变得好转)
@@ -250,6 +250,13 @@ bool HandleRequestError(
             error = util::MakeError(util::kOperationFailed);
         }
         return false;
+
+    default:
+        NLOG_ERR("Request Error: {1}, {2}, {3}")
+            % response.status_code
+            % int(response.error.code)
+            % response.error.message;
+        error = util::MakeError(util::kRuntimeError);
     }
 
     return false;
@@ -267,7 +274,12 @@ bool DownloadFile(
     try
     {
         std::atomic_int flag(kRunning);
-        auto start = std::chrono::steady_clock::now();
+
+        auto start = chr::steady_clock::now();
+        auto measure = [](auto start) -> int {
+            return (int)chr::duration_cast<chr::milliseconds>(
+                chr::steady_clock::now() - start).count();
+            };
 
         NLOG_PRO("DownloadFile() ...");
         NLOG_PRO(" - URL : ") << url;
@@ -289,8 +301,7 @@ bool DownloadFile(
                 {
                     if (error.value() == util::kNetworkError)
                     {
-                        auto elapse = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::steady_clock::now() - start).count();
+                        auto elapse = measure(start);
                         if (elapse < config.timeout)
                         {
                             timeout = std::max(config.timeout - elapse, 500);
@@ -369,12 +380,12 @@ bool DownloadFile(
                     [&](const std::string& data, intptr_t userdata) -> bool {
                         return rf.fill(data, data.size(), ecode);
                     }});
-                HandleRequestError(response, ecode, flag, error);
+                if (HandleRequestError(response, ecode, flag, error))
+                    return !error; // 致命错误, 直接终止
 
-                if (response.status_code != 200 || error)
+                if (error.value() == util::kNetworkError)
                 {
-                    auto elapse = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - start).count();
+                    auto elapse = measure(start);
                     if (elapse < config.timeout)
                     {
                         auto timeout = std::max(config.timeout - elapse, 1000);
@@ -389,7 +400,7 @@ bool DownloadFile(
             } 
             while (1);
 
-            if (response.status_code != 200 || error)
+            if (error)
             {
                 NLOG_ERR("Direct download failed, status code: {1}, error: {2}")
                     % response.status_code
@@ -491,8 +502,7 @@ bool DownloadFile(
                     break;
             }
 
-            auto elapse = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - start).count();
+            auto elapse = measure(start);
             if (elapse > config.timeout)
             {
                 if (states[threadIndex].error) // 存在错误
@@ -532,7 +542,7 @@ bool DownloadFile(
             if (!rf.dump(ecode))
                 NLOG_WAR("RangeFile::dump() failed, error: ") << ecode.message();
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(config.interval));
+            std::this_thread::sleep_for(chr::milliseconds(config.interval));
         }
 
         for (auto t : threads)
