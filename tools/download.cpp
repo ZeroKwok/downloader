@@ -46,7 +46,7 @@ int main(int argc, char** argv)
 
     NLOG_CFG cfg = {
         util::path_from_temp("DownloadLogs"),
-        L"download-%m%d%H%M.log",
+        L"download-%m%d%H.log",
         L"",
         L"[{time}][{level}][{id}][{file}:{line}]: "
     };
@@ -75,6 +75,7 @@ int main(int argc, char** argv)
     }
 
     //_getch();
+    NLOG_APP();
     NLOG_APP(" download.exe argc: %d", argc);
     NLOG_APP(" - URL: ") << url;
     NLOG_APP(" - File: ") << file;
@@ -83,23 +84,37 @@ int main(int argc, char** argv)
 
     std::cout << "Downloading ..." << std::endl;
 
-    auto pos = util::win::cursor_pos();
     auto start = std::chrono::steady_clock::now();
-    auto laset = 0.0;
+    auto measure = [](auto start) -> int {
+        namespace chr = std::chrono;
+        return (int)chr::duration_cast<chr::milliseconds>(
+            chr::steady_clock::now() - start).count();
+        };
+
+    auto pos = util::win::cursor_pos();
+
+    auto lastTime = std::chrono::steady_clock::now();
+    auto lastBytes = 0LL;
     DownloadFile(url, file, [&](const download_status& status)->bool
         {
-            auto p = status.processedBytes * 100.0 / status.totalBytes;
-            if (p - laset > 0.1) {
-                laset = p;
+            auto elapse = measure(lastTime);
+            auto speed = (status.processedBytes - lastBytes) / elapse * 1000;
+            auto progress = status.processedBytes * 100.0 / status.totalBytes;
+
+            if (elapse >= 1000) {
+                lastTime = std::chrono::steady_clock::now();
+                lastBytes = status.processedBytes;
                 util::win::cursor_goto(pos);
-                util::win::output_progress(p);
+                util::win::output_progress(progress);
+
+                std::cout << " " << util::bytes_add_suffix(speed, 1024, "/s     ");
             }
             return gFlags == kFlagRunning;
         },
         preference, ecode);
-    auto end = std::chrono::steady_clock::now();
-    auto elapse = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    auto elapse = measure(start);
 
+    std::cout << std::endl;
     if (ecode)
     {
         std::cerr << "Download failed, elapse: " 
