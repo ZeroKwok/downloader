@@ -49,6 +49,29 @@ struct RangeFileMeta {
     std::set<Range2> _allocateRanges;
     std::set<Range2> _finishedRanges;
     std::set<Range2> _availableRanges;
+
+    void trace() {
+        std::list<std::string> text;
+        for (auto const& r : _finishedRanges)
+            text.push_back(util::sformat("[%08" PRIx64 ", %08" PRIx64 "]", r.start, r.end));
+        NLOG_PRO(" - Status: finished-ranges: {1}, available-ranges: {2}, available-ranges: {3}")
+            % _finishedRanges.size()
+            % _availableRanges.size()
+            % _allocateRanges.size();
+        NLOG_PRO(" - Finished: ") << boost::join(text, ", ");
+        NLOG_PRO(" - BytesProcessed: ") << _bytesProcessed;
+    }
+
+    bool valid() {
+        auto size = 0LL;
+        for (auto const& r : _finishedRanges)
+            size += r.size();
+        for (auto const& r : _availableRanges)
+            size += r.size();
+        for (auto const& r : _allocateRanges)
+            size += r.size();
+        return size == _bytesTotal;
+    }
 };
 
 namespace boost {
@@ -95,21 +118,21 @@ public:
     }
 
     ~RangeFile() {
-        if (vaild())
+        if (valid())
             close(false, std::error_code{});
     }
 
     operator bool() const {
-        return vaild();
+        return valid();
     }
 
-    bool vaild() const {
+    bool valid() const {
         return _file;
     }
 
     // 文件已经打开 或 已经分配了区域, 则不能再指派大小
     bool reserve(int64_t size = -1, int sizeHint = 0x100000) {
-        if (vaild() || 
+        if (valid() || 
             _finishedRanges.size() ||
             _allocateRanges.size()) {
             return false;
@@ -140,6 +163,11 @@ public:
                 util_assert(last.size() <= _blockHint);
             } 
             while (last.end < (_bytesTotal - 1));
+
+            NLOG_PRO("allocate() calculate the available range of the file: ");
+            NLOG_PRO(" - block-hint: ") << _blockHint;
+            NLOG_PRO(" - bytes-total: ") << _bytesTotal;
+            NLOG_PRO(" - available-ranges: ") << _availableRanges.size();
         }
 
         if (_availableRanges.size() > 0)
@@ -260,7 +288,7 @@ public:
                     RangeFileMeta archive = {};
                     try
                     {
-                        std::ifstream is(meta);
+                        std::ifstream is(meta, std::ios::binary);
                         boost::archive::binary_iarchive ia(is);
                         ia >> archive;
                     }
@@ -282,19 +310,19 @@ public:
                         }
                         archive._allocateRanges.clear();
 
-                        std::list<std::string> text;
-                        for (auto const& r : archive._finishedRanges)
-                            text.push_back(util::sformat("[%08" PRIx64 ", %08" PRIx64 "]", r.start, r.end));
-                        NLOG_PRO("open() Restore the previous status: finished: {1}, available: {2}")
-                            % archive._finishedRanges.size()
-                            % archive._availableRanges.size();
-                        NLOG_PRO(" - Finished: ") << boost::join(text, ", ");
-                        NLOG_PRO(" - BytesProcessed: ") << archive._bytesProcessed;
+                        NLOG_PRO("open() Restore the previous status:");
+                        archive.trace();
 
-                        std::lock_guard<std::recursive_mutex> locker(_mutex);
-                        _bytesProcessed = archive._bytesProcessed;
-                        _finishedRanges = std::move(archive._finishedRanges);
-                        _availableRanges = std::move(archive._availableRanges);
+                        if (archive.valid())
+                        {
+                            std::lock_guard<std::recursive_mutex> locker(_mutex);
+                            _bytesProcessed = archive._bytesProcessed;
+                            _finishedRanges = std::move(archive._finishedRanges);
+                            _availableRanges = std::move(archive._availableRanges);
+                        }
+                        else {
+                            NLOG_ERR("open() drop the invalid status");
+                        }
                     }
                 }
             }
@@ -326,8 +354,13 @@ public:
 
         if (finished)
         {
-            if (_bytesTotal > 0 && !is_full())
-                return !(error = util::MakeError(util::kInvalidParam));
+            if (_bytesTotal > 0 && !is_full()) {
+                NLOG_WAR("close() debug the status:");
+                NLOG_WAR(" - _bytesTotal: ") << _bytesTotal;
+                NLOG_WAR(" - is_full: ") << (is_full() ? "true" : "false");
+                trace();
+                return !(error = util::MakeError(util::kRuntimeError));
+            }
 
             auto file = _filename;
             try
@@ -367,21 +400,31 @@ public:
         error.clear();
         try
         {
+#if IS_DEBUG
+            if (!RangeFileMeta::valid()) {
+                NLOG_PRO("dump() invalid status:");
+                trace();
+            }
+#endif
+
             RangeFileMeta archive = {};
             {
                 std::lock_guard<std::recursive_mutex> locker(_mutex);
                 archive = *static_cast<RangeFileMeta*>(this);
             }
 
-            util::bytedata bytes;
-            util::bytes_serialize(bytes, archive);
-            
             try
             {
                 auto meta = std::filesystem::path(_filename) += L".meta";
+                auto temp = std::filesystem::path(_filename) += L".meta.temp";
                 std::lock_guard<std::mutex> locker(_mutexMeta);
-                util::ffile file = util::file_open(meta, O_CREAT | O_TRUNC | O_WRONLY);
-                util::file_write(file, bytes.data(), static_cast<int>(bytes.size()));
+                {
+                    std::ofstream os(temp, std::ios::binary | std::ios::trunc);
+                    boost::archive::binary_oarchive oa(os);
+                    oa << archive;
+                }
+                util::file_remove(meta);
+                util::file_move(temp, meta);
             }
             catch (const util::ferror& ferr)
             {

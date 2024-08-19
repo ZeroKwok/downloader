@@ -335,10 +335,13 @@ bool DownloadFile(
 
         RangeFile rf;
         util_scope_exit = [&] {
+            auto finished = !error;
             std::error_code ecode;
-            if (rf && !rf.close(!error, ecode)) {
-                error = error ? error :ecode; // 若关闭前有错误, 则不改变之前的错误
-                NLOG_ERR("RangeFile::close() failed, error: ") << ecode.message();
+            if (rf && !rf.close(finished, ecode)) {
+                error = error ? error : ecode; // 若关闭前有错误, 则不改变之前的错误
+                NLOG_ERR("RangeFile::close({1}) failed, error: {2}")
+                    % (finished ? "true" : "false")
+                    % ecode.message();
             }
         };
 
@@ -441,8 +444,9 @@ bool DownloadFile(
             util_scope_exit = [&] {
                 state.flag = state.error ? State::kThreadInterrupted 
                                          : State::kThreadFinished;
-                NLOG_APP("Worker finished: {1}, result: {2}")
+                NLOG_APP("Worker finished: {1}, flag: {2}, result: {3}")
                     % std::this_thread::get_id()
+                    % flag.load()
                     % state.error.message();
             };
 
@@ -476,15 +480,20 @@ bool DownloadFile(
                     if (response.status_code == 200 || response.status_code == 206)
                         rf.fill(range, response.text, response.text.size(), ecode);
 
-                    if (HandleRequestError(response, ecode, flag, state.error))
+                    if (HandleRequestError(response, ecode, flag, state.error)) {
+                        NLOG_ERR("HandleRequestError() Fatal error, abort({1})") % state.error;
                         return;
+                    }
                 }
+                return;
             }
-            catch (const std::exception& e)
-            {
+            catch (const std::exception& e) {
                 NLOG_ERR("Unhandled exception: ") << e.what();
-                state.error = util::MakeError(util::kRuntimeError);
             }
+            catch (...) {
+                NLOG_ERR("Unhandled exception");
+            }
+            state.error = util::MakeError(util::kRuntimeError);
         };
 
         std::vector<State> states(config.connections);
@@ -492,20 +501,21 @@ bool DownloadFile(
         for (int i = 0; i < config.connections; ++i)
             threads.push_back(std::make_shared<std::thread>(worker, std::ref(states[i])));
 
-        size_t threadIndex = 0;
+        auto lastIndex = 0;
+        auto lastDump = chr::steady_clock::now();
         while (flag.load() == kRunning && !rf.is_full())
         {
             // 在下载阶段的尾声, 部分线程开始陆续退出, 此时不会设置错误
             // 因此, 在检测是否发生错误时, 要排除正常结束的线程.
-            if (states[threadIndex].flag == State::kThreadFinished) {
-                if (++threadIndex >= states.size())
+            if (states[lastIndex].flag == State::kThreadFinished) {
+                if (++lastIndex >= states.size())
                     break;
             }
 
             auto elapse = measure(start);
             if (elapse > config.timeout)
             {
-                if (states[threadIndex].error) // 存在错误
+                if (states[lastIndex].error) // 存在错误
                 {
                     std::map<int, int> counts;
                     for (auto& s : states)
@@ -532,15 +542,22 @@ bool DownloadFile(
             {
                 if (!callback({ attribute.contentLength, rf.processed() }))
                 {
+                    NLOG_WAR("callback() instructing to terminate a task...");
+
                     flag  = kCancelled;
                     error = util::MakeError(util::kOperationInterrupted);
                     break;
                 }
             }
 
-            std::error_code ecode;
-            if (!rf.dump(ecode))
-                NLOG_WAR("RangeFile::dump() failed, error: ") << ecode.message();
+            // 限制存储下载状态的频率
+            if (measure(lastDump) >= 5000)
+            {
+                std::error_code ecode;
+                if (!rf.dump(ecode))
+                    NLOG_WAR("RangeFile::dump() failed, error: ") << ecode.message();
+                lastDump = chr::steady_clock::now();
+            }
 
             std::this_thread::sleep_for(chr::milliseconds(config.interval));
         }
