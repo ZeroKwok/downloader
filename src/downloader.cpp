@@ -212,7 +212,7 @@ bool HandleRequestError(
     case cpr::ErrorCode::OPERATION_TIMEDOUT:
     case cpr::ErrorCode::SSL_CONNECT_ERROR:
         // 网络错误
-        NLOG_ERR("Request Error: {1}, {2}, {3}")
+        NLOG_ERR("Request Error: status_code: {1}, error_code: {2}, error_message: {3}")
             % response.status_code
             % int(response.error.code)
             % response.error.message;
@@ -222,7 +222,7 @@ bool HandleRequestError(
     case cpr::ErrorCode::INTERNAL_ERROR:
     case cpr::ErrorCode::EMPTY_RESPONSE:
         // 未知错误 或 运行时错误
-        NLOG_ERR("Request Error: {1}, {2}, {3}")
+        NLOG_ERR("Request Error: status_code: {1}, error_code: {2}, error_message: {3}")
             % response.status_code
             % int(response.error.code)
             % response.error.message;
@@ -244,15 +244,16 @@ bool HandleRequestError(
         }
 
         if (400 <= response.status_code) { // 下载错误
-            NLOG_ERR("Request Error: {1}, {2}")
+            NLOG_ERR("Request Error: status_code: {1}, error_code: {2}, error_message: {3}")
                 % response.status_code
+                % int(response.error.code)
                 % response.error.message;
             error = util::MakeError(util::kOperationFailed);
         }
         return false;
 
     default:
-        NLOG_ERR("Request Error: {1}, {2}, {3}")
+        NLOG_ERR("Request Error: status_code: {1}, error_code: {2}, error_message: {3}")
             % response.status_code
             % int(response.error.code)
             % response.error.message;
