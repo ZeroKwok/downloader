@@ -53,9 +53,10 @@ set(SOURCE_FILES
 
 if(DOWNLOADER_BUILD_SHARED_LIB)
     add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES} ${INCLUDE_FILES})
-    target_compile_definitions(${PROJECT_NAME} PUBLIC DOWNLOADER_SHARE_LIB)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE DOWNLOADER_SHARE_LIB)
 else()
     add_library(${PROJECT_NAME} STATIC ${SOURCE_FILES} ${INCLUDE_FILES})
+    target_compile_definitions(${PROJECT_NAME} PUBLIC DOWNLOADER_STATIC_LIB)
 endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES DEBUG_POSTFIX "d")
