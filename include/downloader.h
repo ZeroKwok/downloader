@@ -7,6 +7,17 @@
 #ifndef downloader_h__
 #define downloader_h__
 
+#ifdef DOWNLOADER_SHARE_LIB
+#    define DOWNLOADER_LIB __declspec(dllexport)
+#else
+#    ifdef DOWNLOADER_STATIC_LIB
+#        define DOWNLOADER_LIB
+#    else
+#        define DOWNLOADER_LIB __declspec(dllimport)
+#    endif // DOWNLOADER_STATIC_LIB
+#endif // DOWNLOADER_SHARE_LIB
+
+
 #include <string>
 #include <functional>
 #include <filesystem>
@@ -42,7 +53,7 @@ struct download_preference
 //! @param config 下载策略
 //! @param error 失败时将包含具体的错误原因(BaseError)
 //! @return 成功返回true, 否则失败
-bool DownloadFile(
+DOWNLOADER_LIB bool DownloadFile(
     const std::string& url,
     const std::filesystem::path& filename,
     const std::function<bool(const download_status&)>& callback,
@@ -54,7 +65,7 @@ bool DownloadFile(
 //! @param data 请求到的数据
 //! @param error 失败时将包含具体的错误原因(BaseError)
 //! @return HTTP response status codes
-int RequestContent(
+DOWNLOADER_LIB int RequestContent(
     const std::string& url,
     const std::map<std::string, std::string>& header,
     std::string& data,
@@ -77,8 +88,8 @@ struct file_attribute
 //! @param timeout 超时时间, 毫秒
 //! @param error 失败时将包含具体的错误原因(BaseError)
 //! @return 成功返回true, 否则失败
-bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::error_code& error);
-bool GetFileAttribute(
+DOWNLOADER_LIB bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::error_code& error);
+DOWNLOADER_LIB bool GetFileAttribute(
     file_attribute& attribute, 
     const std::string& url, 
     const std::map<std::string, std::string>& header,

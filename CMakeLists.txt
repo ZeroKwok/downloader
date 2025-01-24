@@ -11,6 +11,7 @@ project(downloader VERSION 0.2.2.0)
 
 option(DOWNLOADER_BUILD_TOOLS "Enable to build the tools" ON)
 option(DOWNLOADER_STATIC_RUNTIME "Enable link with runtime statically" OFF)
+option(DOWNLOADER_BUILD_SHARED_LIB "Enable build shared libraries" OFF)
 
 if(MSVC AND DOWNLOADER_STATIC_RUNTIME)
     foreach(flag_var CMAKE_CXX_FLAGS CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS_MINSIZEREL CMAKE_CXX_FLAGS_RELWITHDEBINFO)
@@ -50,7 +51,12 @@ set(SOURCE_FILES
     "src/uerror.cpp"
     "src/downloader.cpp")
 
-add_library(${PROJECT_NAME} STATIC ${SOURCE_FILES} ${INCLUDE_FILES})
+if(DOWNLOADER_BUILD_SHARED_LIB)
+    add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES} ${INCLUDE_FILES})
+    target_compile_definitions(${PROJECT_NAME} PUBLIC DOWNLOADER_SHARE_LIB)
+else()
+    add_library(${PROJECT_NAME} STATIC ${SOURCE_FILES} ${INCLUDE_FILES})
+endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES DEBUG_POSTFIX "d")
 set_target_properties(${PROJECT_NAME} PROPERTIES 
@@ -104,4 +110,8 @@ if (NOT ${CMAKE_CURRENT_SOURCE_DIR} STREQUAL ${CMAKE_SOURCE_DIR})
                    "${CMAKE_CURRENT_SOURCE_DIR}/build/build_static_dynamic_x86_vc14.2.py")
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/build/templates.in" 
                    "${CMAKE_CURRENT_SOURCE_DIR}/build/build_static_static_x86_vc14.1_xp.py")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/build/templates.in" 
+                   "${CMAKE_CURRENT_SOURCE_DIR}/build/build_dynamic_static_x86_vc14.1_xp.py")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/build/templates.in" 
+                   "${CMAKE_CURRENT_SOURCE_DIR}/build/build_dynamic_dynamic_x86_vc14.1_xp.py")
 endif()
