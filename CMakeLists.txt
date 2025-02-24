@@ -7,7 +7,7 @@
 cmake_policy(SET CMP0074 NEW)
 cmake_minimum_required(VERSION 3.13)
 
-project(downloader VERSION 0.2.2.0)
+project(downloader VERSION 0.2.3.0)
 
 option(DOWNLOADER_BUILD_TOOLS "Enable to build the tools" ON)
 option(DOWNLOADER_STATIC_RUNTIME "Enable link with runtime statically" OFF)
