@@ -530,8 +530,22 @@ public:
 
     bool is_full() const {
         std::lock_guard<std::recursive_mutex> locker(const_cast<std::recursive_mutex&>(_mutex));
-        if (_finishedRanges.size() == 1)
-            return *_finishedRanges.cbegin() == Range2{ 0, _bytesTotal - 1 };
+        
+        // 存在以下几种情况
+        // 1. 已经划分区间，且所有区间都已填充 (已满)
+        // 2. 尚未划分区间，且传输字节数等于文件总字节数 (已满)
+        // 3. 尚未划分区间，且文件总字节数无效 (外部判断)
+
+        if (!_availableRanges.empty() || !_allocateRanges.empty() || !_finishedRanges.empty())
+        {
+            if (_finishedRanges.size() == 1)
+                return *_finishedRanges.cbegin() == Range2{ 0, _bytesTotal - 1 };
+        }
+        else if (_bytesTotal > 0)
+        {
+            return _bytesTotal == _bytesProcessed;
+        }
+    
         return false;
     }
 
