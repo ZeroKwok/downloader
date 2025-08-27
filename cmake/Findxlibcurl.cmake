@@ -1,6 +1,6 @@
 # This file is part of the downloader projects.
 # 
-# Copyright (c) 2018-2023, zero.kwok@foxmail.com
+# Copyright (c) 2018-2025, Zero <zero.kwok@foxmail.com>
 # For the full copyright and license information, please view the LICENSE
 # file that was distributed with this source code.
 
