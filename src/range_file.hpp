@@ -40,16 +40,19 @@ struct Range2 : public Range {
 };
 
 //
-// 区间化文件的元数据, 用于状态的序列化
+// 区间化文件的元数据结构，用于文件分块处理的状态序列化和追踪
 //
 struct RangeFileMeta {
-    int64_t          _blockHint = 0;
-    int64_t          _bytesTotal = -1;
-    int64_t          _bytesProcessed = 0;
-    std::set<Range2> _allocateRanges;
-    std::set<Range2> _finishedRanges;
-    std::set<Range2> _availableRanges;
+    int64_t          _blockHint = 0;        // 区块大小暗示，用于区间分配的建议大小
+    int64_t          _bytesTotal = -1;      // 文件总字节数，-1表示未初始化
+    int64_t          _bytesProcessed = 0;   // 已成功处理的字节总数
+    
+    std::set<Range2> _allocateRanges;       // 已分配但未完成的区间集合，这些区间正在被处理但尚未完成
+    std::set<Range2> _finishedRanges;       // 已成功完成处理的区间集合，这些区间的数据处理已经完成
+    std::set<Range2> _availableRanges;      // 可用区间集合，表示尚未分配处理的文件区间
+                                            // allocate() 操作从这里分配区间，分配后从这里移除
 
+    // 跟踪并输出当前状态信息到日志
     void trace() {
         std::list<std::string> text;
         for (auto const& r : _finishedRanges)
@@ -62,6 +65,8 @@ struct RangeFileMeta {
         NLOG_PRO(" - BytesProcessed: ") << _bytesProcessed;
     }
 
+    // 验证当前状态是否一致有效
+    // 检查所有区间的总字节数是否等于文件总字节数
     bool valid() {
         auto size = 0LL;
         for (auto const& r : _finishedRanges)
@@ -70,7 +75,7 @@ struct RangeFileMeta {
             size += r.size();
         for (auto const& r : _allocateRanges)
             size += r.size();
-        return size == _bytesTotal;
+        return size == _bytesTotal; // 验证总和是否等于文件总大小
     }
 };
 
@@ -118,21 +123,17 @@ public:
     }
 
     ~RangeFile() {
-        if (valid())
+        if (opened())
             close(false, std::error_code{});
     }
 
     operator bool() const {
-        return valid();
-    }
-
-    bool valid() const {
-        return _file;
+        return opened();
     }
 
     // 文件已经打开 或 已经分配了区域, 则不能再指派大小
     bool reserve(int64_t size = -1, int sizeHint = 0x100000) {
-        if (valid() || 
+        if (opened() || 
             _finishedRanges.size() ||
             _allocateRanges.size()) {
             return false;
@@ -149,9 +150,7 @@ public:
             return {};
 
         std::lock_guard<std::recursive_mutex> locker(_mutex);
-        if (_availableRanges.empty() && 
-            _allocateRanges.empty() && 
-            _finishedRanges.empty())
+        if (_availableRanges.empty() && _allocateRanges.empty() && _finishedRanges.empty())
         {
             Range2 last = { 0, 0, 0, Range2::kUnfilled };
             do
@@ -339,6 +338,10 @@ public:
         }
 
         return !error;
+    }
+
+    bool opened() const {
+        return _file;
     }
 
     bool close(bool finished, std::error_code& error)
