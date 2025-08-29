@@ -12,38 +12,48 @@
 #include "common/assert.hpp"
 #include <algorithm>
 
+/// @brief 表示一个整数范围 [start, end]（包含两端点）
 struct Range
 {
-    int64_t    start = -1;
-    int64_t    end   = -1;
+    int64_t start = -1;  ///< 范围起始值（包含），-1 表示无效
+    int64_t end   = -1;  ///< 范围结束值（包含），-1 表示无效
 
-    // 00-05, size 6
-    // 06-10, size 5
-    // 11-15, size 5
-    // ----------[    ]------------
-    // -[    ]---------------------
-    // ------[    ]----------------
-    // --------------[    ]--------
-    // ------------------[    ]----
-    // -------[           ]--------
-
+    /// @brief 检查范围是否有效
+    /// @details
+    /// 00-05, size 6
+    /// 06-10, size 5
+    /// 11-15, size 5
+    /// ----------[    ]------------
+    /// -[    ]---------------------
+    /// ------[    ]----------------
+    /// --------------[    ]--------
+    /// ------------------[    ]----
+    /// -------[           ]--------
     bool valid() const {
         return start >= 0 && start <= end;
     }
 
+    /// @brief 转换为布尔值，等价于 valid()
     operator bool() const {
         return valid();
     }
 
+    /// @brief 比较两个范围的起始值
     bool operator<(const Range& other) const {
         return start < other.start;
     }
 
+    /// @brief 检查两个范围是否完全相同
     bool operator==(const Range& other) const {
         return start == other.start && end == other.end;
     }
 
-    // 范围合并: 相交 或 挨着
+    /// @brief 合并两个可合并的范围（相交或相邻）
+    /// @note 若两个范围不可合并，返回无效范围
+    /// @example 
+    ///   [1, 5] + [3, 7] = [1, 7]   // 相交
+    ///   [1, 5] + [6, 8] = [1, 8]   // 相邻
+    ///   [1, 5] + [7, 9] = invalid  // 不相邻也不相交
     Range operator+(const Range& other) const {
         util_assert(valid() && other.valid());
         if (mergeable(other)) {
@@ -54,7 +64,12 @@ struct Range
         return {};
     }
 
-    // 计算范围差: 获得一个刚好填充它们间隔的范围
+    /// @brief 计算两个非重叠范围之间的间隔范围
+    /// @note 若两个范围相交或相邻，返回无效范围（无间隔）
+    /// @example 
+    ///   [1, 5] - [7, 9] = [6, 6]     // 间隔为单个点
+    ///   [1, 5] - [8, 10] = [6, 7]    // 间隔为范围
+    ///   [1, 5] - [3, 7] = invalid    // 存在重叠
     Range operator-(const Range& other) const {
         util_assert(valid() && other.valid());
         if (!mergeable(other))
@@ -62,12 +77,14 @@ struct Range
         return {};
     }
 
-    // 判断是否相交: 范围相交, 共用端点, 完全包含
+    /// @brief 检查两个范围是否相交（包含端点重叠）
+    /// @note 完全包含或部分重叠均视为相交
     bool intersected(const Range& other) const {
         return !(end < other.start || start > other.end);
     }
 
-    // 判断是否可合并: 相交 或 挨着
+    /// @brief 检查两个范围是否可合并（相交或相邻）
+    /// @note 相邻指两个范围之间没有间隔（如 [1,5] 和 [6,10]）
     bool mergeable(const Range& other) const {
         if (!valid() || !other.valid())
             return false;
@@ -76,7 +93,9 @@ struct Range
         return std::abs(start - other.end) == 1 || std::abs(end - other.start) == 1;
     }
 
-    int64_t size() const { // range 包含边端点, 因此大小应加一
+    /// @brief 获取范围大小（包含边端点，因此需要 +1）
+    /// @example [1,5] 的大小为 5 (5-1+1)
+    int64_t size() const {
         return valid() ? end - start + 1 : 0;
     }
 };
