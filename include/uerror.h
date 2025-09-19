@@ -32,7 +32,7 @@ namespace util {
         kFilesystemNoSpace                   = 0x55, //!< 本地磁盘空间不足
         kFilesystemNetworkError              = 0x56, //!< 文件系统网络错误
 
-        kFileNotFound                        = 0x61, //!< 文件系统文件未找到
+        kFileNotFound                        = 0x61, //!< 文件文件未找到(包括 404)
         kFileNotWritable                     = 0x62, //!< 本地文件不可写
         kFilePathTooLong                     = 0x63, //!< 本地文件路径太长
         kFileWasUsedByOtherProcesses         = 0x64, //!< 文件被其他进程使用

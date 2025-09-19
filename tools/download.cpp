@@ -74,6 +74,15 @@ int main(int argc, char** argv)
             return showHelp();
     }
 
+    if (argc > 5)
+    {
+        if(util::to_lower(argv[5]) == "debug")
+        {
+            std::cout << "Press any key to continue..." << std::endl;
+            _getch();
+        }
+    }
+
     //_getch();
     NLOG_APP();
     NLOG_APP(" download.exe argc: %d", argc);
