@@ -25,7 +25,10 @@ static inline std::shared_ptr<cpr::Session> MakeSession(
     session->SetUrl(url);
     session->SetOption(cpr::Redirect{});
     session->SetOption(cpr::VerifySsl{ false });
-    session->SetConnectTimeout(3000);
+
+    // session->SetTimeout(8000);                 // 总时间一旦超过, 就断开连接, 不论连接是否正常。
+    session->SetConnectTimeout(3000);             // 建立连接的时间一旦超过, 就断开连接
+    session->SetLowSpeed(cpr::LowSpeed{1024, 8}); // 速度小于1kb/s，且持续超过8秒，则断开连接。
     session->SetHeader(cpr::Header
         {
             {"Connection", "keep-alive"}
@@ -293,7 +296,7 @@ bool DownloadFile(
         file_attribute attribute = {};
         if (config.connections > 1) //  单点下载不用探测文件长度
         {
-            int timeout  = config.timeout;
+            int timeout = config.timeout;
             do 
             {
                 // 当 SSL/TLS 握手失败时, 将突破 CONNECTTIMEOUT 超时限制, 因此这里需要加入重试机制
@@ -302,11 +305,9 @@ bool DownloadFile(
                 {
                     if (error.value() == util::kNetworkError)
                     {
-                        auto elapse = measure(start);
-                        if (elapse < config.timeout)
+                        if (measure(start) < config.timeout)
                         {
-                            timeout = std::max(config.timeout - elapse, 500);
-                            NLOG_PRO("keep trying, timeout: {1} ...") % timeout;
+                            NLOG_PRO("keep trying ...");
                             continue;
                         }
                     }
@@ -354,7 +355,7 @@ bool DownloadFile(
             NLOG_PRO("Direct download ...");
 
             // 未知大小 or 长度太短 or 不支持范围请求, 只能单点下载
-            session1->SetConnectTimeout(config.timeout);
+            session1->SetConnectTimeout(3000);
             session1->SetProgressCallback(cpr::ProgressCallback(
                 [&](cpr::cpr_off_t downloadTotal,
                     cpr::cpr_off_t downloadNow,
@@ -389,17 +390,12 @@ bool DownloadFile(
 
                 if (error.value() == util::kNetworkError)
                 {
-                    auto elapse = measure(start);
-                    if (elapse < config.timeout)
+                    if (measure(start) < config.timeout)
                     {
-                        auto timeout = std::max(config.timeout - elapse, 1000);
-                        session1->SetConnectTimeout(timeout);
-
-                        NLOG_PRO("keep trying, timeout: {1} ...") % timeout;
+                        NLOG_PRO("keep trying...");
                         continue;
                     }
                 }
-
                 break;
             } 
             while (1);
