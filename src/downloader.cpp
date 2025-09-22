@@ -28,7 +28,9 @@ static inline std::shared_ptr<cpr::Session> MakeSession(
 
     // session->SetTimeout(8000);                 // 总时间一旦超过, 就断开连接, 不论连接是否正常。
     session->SetConnectTimeout(3000);             // 建立连接的时间一旦超过, 就断开连接
-    session->SetLowSpeed(cpr::LowSpeed{1024, 8}); // 速度小于1kb/s，且持续超过8秒，则断开连接。
+    session->SetLowSpeed(cpr::LowSpeed{           // 速度小于1kb/s，且持续超过8秒，则断开连接。
+        1024, 
+        std::chrono::seconds(8)}); 
     session->SetHeader(cpr::Header
         {
             {"Connection", "keep-alive"}
@@ -200,21 +202,22 @@ bool HandleRequestError(
 
     switch (response.error.code)
     {
-    case cpr::ErrorCode::REQUEST_CANCELLED:
+    case cpr::ErrorCode::ABORTED_BY_CALLBACK:
+    case cpr::ErrorCode::AGAIN:
         util_assert(flag != kRunning);
         if (flag == kCancelled) // 只有取消才改写error
             error = util::MakeError(util::kOperationInterrupted);
         return true;
 
-        // 余下的错误, 不好判断是否属于致命错误(因为网络错误可能因为重试变得好转)
-        // 因此, 这里仅设置错误码, 由外部做决断
-    case cpr::ErrorCode::NETWORK_SEND_FAILURE:
-    case cpr::ErrorCode::NETWORK_RECEIVE_ERROR:
-    case cpr::ErrorCode::HOST_RESOLUTION_FAILURE:
-    case cpr::ErrorCode::CONNECTION_FAILURE:
+        // 网络错误 (可重试)
+        // 这里仅设置错误码, 是否属于致命错误需要外部判断(因为网络错误可能因为重试变得好转)
+    case cpr::ErrorCode::SEND_ERROR:
+    case cpr::ErrorCode::RECV_ERROR:
+    case cpr::ErrorCode::COULDNT_RESOLVE_HOST:
+    case cpr::ErrorCode::COULDNT_CONNECT:
+    case cpr::ErrorCode::PROXY:
     case cpr::ErrorCode::OPERATION_TIMEDOUT:
     case cpr::ErrorCode::SSL_CONNECT_ERROR:
-        // 网络错误
         NLOG_ERR("Request Error: status_code: {1}, error_code: {2}, error_message: {3}")
             % response.status_code
             % int(response.error.code)
@@ -222,9 +225,9 @@ bool HandleRequestError(
         error = util::MakeError(util::kNetworkError);
         return false;
 
-    case cpr::ErrorCode::INTERNAL_ERROR:
-    case cpr::ErrorCode::EMPTY_RESPONSE:
-        // 未知错误 或 运行时错误
+        // 未知错误 / 内部错误
+    case cpr::ErrorCode::UNKNOWN_ERROR:
+    case cpr::ErrorCode::GOT_NOTHING:
         NLOG_ERR("Request Error: status_code: {1}, error_code: {2}, error_message: {3}")
             % response.status_code
             % int(response.error.code)
@@ -384,7 +387,7 @@ bool DownloadFile(
             {
                 std::error_code ecode;
                 response = session1->Download(cpr::WriteCallback{
-                    [&](const std::string& data, intptr_t userdata) -> bool {
+                    [&](const std::string_view& data, intptr_t userdata) -> bool {
                         return rf.fill(data, data.size(), ecode);
                     }});
                 if (HandleRequestError(response, ecode, flag, error))
