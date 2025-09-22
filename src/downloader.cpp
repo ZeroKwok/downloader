@@ -347,10 +347,12 @@ bool DownloadFile(
             }
         };
 
+        auto is_small = attribute.contentLength > 0 && attribute.contentLength < 10 * 1024 * 1024;
         auto session1 = MakeSession(url, config.header);
         if (attribute.contentLength == -1 || 
             attribute.contentLength <= config.blockSize ||
-            attribute.acceptRanges.empty())
+            attribute.acceptRanges.empty() ||
+            is_small)
         {
             NLOG_PRO("Direct download ...");
 
