@@ -360,7 +360,6 @@ bool DownloadFile(
             NLOG_PRO("Direct download ...");
 
             // 未知大小 or 长度太短 or 不支持范围请求, 只能单点下载
-            session1->SetConnectTimeout(3000);
             session1->SetProgressCallback(cpr::ProgressCallback(
                 [&](cpr::cpr_off_t downloadTotal,
                     cpr::cpr_off_t downloadNow,
@@ -465,18 +464,6 @@ bool DownloadFile(
 
                     std::error_code ecode;
                     session->SetOption(cpr::Range{ range.start, range.end });
-
-#if 0
-                    //
-                    // 有的服务器可能会在下载过程中返回错误信息, 此时下载的内容并不是文件内容
-                    // 因此不能直接写入文件
-                    session->SetWriteCallback(cpr::WriteCallback{
-                        [&](const std::string& data, intptr_t userdata) -> bool
-                        {
-                            rf.fill(range, data, data.size(), ecode);
-                            return !ecode && flag == kRunning;
-                        } });
-#endif
 
                     auto response = session->Get();
                     if (response.status_code == 200 || response.status_code == 206)
