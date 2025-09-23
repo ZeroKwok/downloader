@@ -8,6 +8,7 @@
 #define uerror_cpp__
 
 #include "uerror.h"
+#include <string/string_util.h>
 #include <filesystem/path_util.h>
 #include <platform/platform_util.h>
 
@@ -17,6 +18,39 @@
 #endif
 
 namespace util {
+
+std::string ErrorCategory::message(int ev) const
+{
+    switch (ev) {
+    case kSucceed:                         return "Succeed";
+    case kUnknownError:                    return "Unknown error";
+    case kInvalidParam:                    return "Invalid parameter";
+    case kRuntimeError:                    return "Runtime error";
+    case kOutOfMemory:                     return "Out of memory";
+    case kPermissionDenied:                return "Permission denied";
+
+    case kOperationFailed:                 return "Operation failed";
+    case kOperationInterrupted:            return "Operation interrupted (canceled by user)";
+
+    case kFilesystemError:                 return "Filesystem error";
+    case kFilesystemIOError:               return "Filesystem I/O error";
+    case kFilesystemNotSupportLargeFiles:  return "Filesystem does not support large files (e.g. FAT32/FAT16 on Windows)";
+    case kFilesystemUnavailable:           return "Filesystem unavailable (e.g. device unplugged)";
+    case kFilesystemNoSpace:               return "No space left on device";
+    case kFilesystemNetworkError:          return "Filesystem network error";
+
+    case kFileNotFound:                    return "File not found (including 404)";
+    case kFileNotWritable:                 return "File not writable";
+    case kFilePathTooLong:                 return "File path too long";
+    case kFileWasUsedByOtherProcesses:     return "File is being used by another process";
+
+    case kNetworkError:                    return "Network error";
+    case kServerError:                     return "Server error";
+
+    default:
+        return util::sformat("Unknown error: 0x%08x", ev);
+    }
+}
 
 std::error_code MakeErrorFromNative(
     const int ecode,

@@ -9,7 +9,6 @@
 
 #include <filesystem>
 #include <system_error>
-#include <string/string_util.h>
 
 namespace util {
 
@@ -52,11 +51,7 @@ namespace util {
         }
 
         virtual const char* name() const noexcept { return "Error"; }
-        virtual std::string message(int ev) const {
-            if (ev == kSucceed)
-                return "Succeed";
-            return util::sformat("Error: 0x%08x", ev);
-        }
+        virtual std::string message(int ev) const;
     };
 
     //! @brief 通过错误码创建标准错误码对象.
