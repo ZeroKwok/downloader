@@ -9,6 +9,7 @@
 #include <conio.h>
 
 #include <iostream>
+#include <fmt/core.h>
 #include <boost/program_options.hpp>
 
 #include "downloader.h"
@@ -116,17 +117,22 @@ int main(int argc, char** argv)
         auto cpos = util::win::cursor_pos();
         DownloadFile(url, file, [&](const download_status& status)->bool
             {
-                auto elapse = measure(start);
-                auto speed = (status.processedBytes - lastBytes) / elapse * 1000;
-                auto progress = status.processedBytes * 100.0 / status.totalBytes;
-
-                if (measure(last) >= 500) {
+                auto elapse = measure(last);
+                if (elapse >= 500) {
                     last = std::chrono::steady_clock::now();
+                    
+                    auto speed = (status.processedBytes - lastBytes) / elapse * 1000;
+                    auto progress = status.processedBytes * 100.0 / status.totalBytes;
+
                     lastBytes = status.processedBytes;
+
                     util::win::cursor_goto(cpos);
                     util::win::output_progress(progress);
 
-                    std::cout << " " << util::bytes_add_suffix(speed, 1024, "/s     ");
+                    fmt::print(" {}/{}\t{}/s        ",
+                        util::bytes_add_suffix(status.processedBytes),
+                        util::bytes_add_suffix(status.totalBytes),
+                        util::bytes_add_suffix(speed));
                 }
                 return gFlags == kFlagRunning;
             },
