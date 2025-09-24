@@ -30,6 +30,7 @@ void BreakCallback(int signum)
 {
     switch (signum)
     {
+    case SIGINT:
     case SIGBREAK:
         gFlags |= kFlagInterrupted;
         break;
@@ -39,12 +40,14 @@ void BreakCallback(int signum)
 
 int main(int argc, char** argv)
 {
+    signal(SIGINT, BreakCallback);
+    signal(SIGBREAK, BreakCallback);
     try {
+        bool debug = false;
         std::string url;
         std::string file;
         uint64_t timeout = 0;
         uint64_t connections = 0;
-        bool debug = false;
 
         // 定义命令行选项
         po::options_description desc("Usage: download.exe <url> [options]");
@@ -90,7 +93,6 @@ int main(int argc, char** argv)
             L"[{time}][{level}][{id}][{file}:{line}]: "
         };
         NLOG_SET_CONFIG(cfg);
-        signal(SIGBREAK, BreakCallback);
 
         NLOG_APP();
         NLOG_APP(" download.exe argc: %d", argc);
