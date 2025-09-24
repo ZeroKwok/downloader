@@ -57,7 +57,7 @@ int main(int argc, char** argv)
             ("url", po::value<std::string>(&url), "Download URL")
             ("file,f", po::value<std::string>(&file), "Output file path")
             ("timeout,t", po::value<uint64_t>(&timeout)->default_value(0), "Timeout in milliseconds")
-            ("connections,c", po::value<uint64_t>(&connections)->default_value(0), "Number of connections")
+            ("connections,c", po::value<uint64_t>(&connections)->default_value(4), "Number of connections (default 4)")
             ("debug,d", po::bool_switch(&debug), "Enable debug mode (pause before run)");
 
         po::positional_options_description pos;
@@ -131,7 +131,7 @@ int main(int argc, char** argv)
 
                     fmt::print(" {}/{}\t{}/s        ",
                         util::bytes_add_suffix(status.processedBytes),
-                        util::bytes_add_suffix(status.totalBytes),
+                        (status.totalBytes == 0 ? "--" : util::bytes_add_suffix(status.totalBytes)),
                         util::bytes_add_suffix(speed));
                 }
                 return gFlags == kFlagRunning;
