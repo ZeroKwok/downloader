@@ -7,7 +7,7 @@
 cmake_policy(SET CMP0074 NEW)
 cmake_minimum_required(VERSION 3.13)
 
-project(downloader VERSION 0.2.4.0)
+project(downloader VERSION 0.2.5.0)
 
 option(DOWNLOADER_BUILD_TOOLS "Enable to build the tools" ON)
 option(DOWNLOADER_STATIC_RUNTIME "Enable link with runtime statically" OFF)
@@ -35,6 +35,7 @@ add_compile_definitions(AUTO_LINK_LIB_DIAGNOSTIC=1)
 find_package(xcpr REQUIRED)
 find_package(xlibcurl REQUIRED)
 find_package(xzlib REQUIRED)
+find_package(fmt REQUIRED)
 find_package(nlog REQUIRED)
 find_package(utility REQUIRED)
 find_package(Boost REQUIRED thread date_time filesystem)
@@ -73,7 +74,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include>)
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER "${INCLUDE_FILES}")
 
-target_link_libraries(${PROJECT_NAME} PUBLIC xcpr xlibcurl xzlib)
+target_link_libraries(${PROJECT_NAME} PUBLIC fmt::fmt-header-only xcpr xlibcurl xzlib)
 if(DOWNLOADER_STATIC_RUNTIME)
     target_link_libraries(${PROJECT_NAME} PUBLIC libnlog)
 else()
