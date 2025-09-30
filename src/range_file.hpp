@@ -485,6 +485,7 @@ public:
             if (size <= 0) // 没有可填充的数据
                 return true;
             util_assert(range.position >= range.start);
+            util_assert(range.position <= range.end);
 
             try
             {

@@ -124,7 +124,7 @@ bool GetFileAttribute(
         curl_easy_setopt(curl, CURLOPT_HEADERDATA, &attribute);
 
         // range
-        curl_easy_setopt(curl, CURLOPT_RANGE, "0-");
+        curl_easy_setopt(curl, CURLOPT_RANGE, "10-");
 
         CURLcode res = curl_easy_perform(curl);
         curl_slist_free_all(chunk);
@@ -134,10 +134,18 @@ bool GetFileAttribute(
         case CURLE_OK: {
             long status_code{};
             curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
-            if (200 == status_code || 206 == status_code)
-                curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &attribute.contentLength);
-            if (206 == status_code && attribute.acceptRanges.empty())
-                attribute.acceptRanges = "bytes"; // 这里要确定: 返回206 是否一定表示支持: range: bytes
+            curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &attribute.contentLength);
+
+            if (206 == status_code)
+            {
+                attribute.contentLength += 10;
+                if (attribute.acceptRanges.empty())
+                    attribute.acceptRanges = "bytes";
+            }
+
+            if (200 == status_code) {
+                attribute.acceptRanges.clear();
+            }
         }
         break;
 
@@ -435,6 +443,7 @@ bool DownloadFile(
                 kThreadInterrupted 
             };
             int flag = kThreadNone;
+            int workerId = 0;
             std::error_code error;
         };
 
@@ -464,10 +473,12 @@ bool DownloadFile(
 
                     std::error_code ecode;
                     session->SetOption(cpr::Range{ range.start, range.end });
-
+                    session->SetWriteCallback(cpr::WriteCallback{
+                        [&](const std::string_view& data, intptr_t userdata) -> bool {
+                            return rf.fill(range, data, data.size(), ecode);
+                        } });
                     auto response = session->Get();
-                    if (response.status_code == 200 || response.status_code == 206)
-                        rf.fill(range, response.text, response.text.size(), ecode);
+                    util_assert(response.status_code == 206);
 
                     if (HandleRequestError(response, ecode, flag, state.error)) {
                         NLOG_ERR("HandleRequestError() Fatal error, abort({1})") % state.error;
@@ -487,8 +498,11 @@ bool DownloadFile(
 
         std::vector<State> states(config.connections);
         std::vector<std::shared_ptr<std::thread>> threads;
-        for (int i = 0; i < config.connections; ++i)
+        for (int i = 0; i < config.connections; ++i) {
+            states[i].workerId = i;
             threads.push_back(std::make_shared<std::thread>(worker, std::ref(states[i])));
+        }
+
 
         auto lastIndex = 0;
         auto lastDump = chr::steady_clock::now();
