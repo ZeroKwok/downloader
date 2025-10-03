@@ -56,6 +56,11 @@ static inline size_t WriteHeadCallback(
     return size;
 }
 
+static inline size_t DiscardBodyCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    // 中断下载
+    return 0;
+}
+
 bool GetFileAttribute(file_attribute& attribute, const std::string& url, std::error_code& error)
 {
     return GetFileAttribute(attribute, url, {}, 3000, error);
@@ -78,20 +83,21 @@ bool GetFileAttribute(
         util_scope_exit = [&] { curl_easy_cleanup(curl); };
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl, CURLOPT_HTTPGET, 1);
-        curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+        curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, timeout);
 
+        // SSL 验证
         cpr::VerifySsl verify{ false };
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, verify ? 1L : 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, verify ? 2L : 0L);
 
+        // 跟随跳转
         cpr::Redirect redirect{};
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, redirect.follow ? 1L : 0L);
         curl_easy_setopt(curl, CURLOPT_MAXREDIRS, redirect.maximum);
         curl_easy_setopt(curl, CURLOPT_UNRESTRICTED_AUTH, redirect.cont_send_cred ? 1L : 0L);
 
-        // NOLINTNEXTLINE (google-runtime-int)
+        // post redirect flag
         long mask = 0;
         if (cpr::any(redirect.post_flags & cpr::PostRedirectFlags::POST_301))
             mask |= CURL_REDIR_POST_301;
@@ -123,6 +129,9 @@ bool GetFileAttribute(
         curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, WriteHeadCallback);
         curl_easy_setopt(curl, CURLOPT_HEADERDATA, &attribute);
 
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, DiscardBodyCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, nullptr);
+
         // range
         curl_easy_setopt(curl, CURLOPT_RANGE, "10-");
 
@@ -131,6 +140,7 @@ bool GetFileAttribute(
 
         switch (res)
         {
+        case CURLE_WRITE_ERROR: // 由 DiscardBodyCallback 返回0引起的中断
         case CURLE_OK: {
             long status_code{};
             curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
@@ -368,6 +378,14 @@ bool DownloadFile(
             NLOG_PRO("Direct download ...");
 
             // 未知大小 or 长度太短 or 不支持范围请求, 只能单点下载
+            rf.reserve(attribute.contentLength);
+            if (!rf.open(filename, error)) {
+                NLOG_ERR("rf.open({1}) failed, error: {2}")
+                    % filename.wstring()
+                    % error.message();
+                return !error;
+            }
+
             session1->SetProgressCallback(cpr::ProgressCallback(
                 [&](cpr::cpr_off_t downloadTotal,
                     cpr::cpr_off_t downloadNow,
@@ -380,14 +398,6 @@ bool DownloadFile(
                     }
                     return true;
                 }));
-
-            rf.reserve(attribute.contentLength);
-            if (!rf.open(filename, error)) {
-                NLOG_ERR("rf.open({1}) failed, error: {2}")
-                    % filename.wstring()
-                    % error.message();
-                return !error;
-            }
 
             cpr::Response response;
             do 
