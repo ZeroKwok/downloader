@@ -315,7 +315,7 @@ bool DownloadFileBySingle(DownloadFileContext& context, std::error_code& error)
         % error.message();
         return !error;
     }
-    
+
     auto session = MakeSession(context.url, context.config.header);
     session->SetProgressCallback(cpr::ProgressCallback(
         [&](cpr::cpr_off_t downloadTotal,
@@ -394,6 +394,7 @@ bool DownloadFileByMulti(DownloadFileContext& context, std::error_code& error)
     {
         state.flag = State::kThreadRunning;
         NLOG_APP("Worker start: {1}") % std::this_thread::get_id();
+
         util_scope_exit = [&] {
             state.flag = state.error ? State::kThreadInterrupted 
                                      : State::kThreadFinished;
@@ -403,7 +404,7 @@ bool DownloadFileByMulti(DownloadFileContext& context, std::error_code& error)
                 % state.error.message();
         };
 
-        try 
+        try
         {
             auto session = MakeSession(context.url, context.config.header);
 
@@ -525,10 +526,6 @@ bool DownloadFile(
     error.clear();
     try
     {
-        DownloadFileContext context{ 
-            url, filename, kRunning, callback, config, 
-            {}, {}, chr::steady_clock::now() };
-
         NLOG_PRO("DownloadFile() ...");
         NLOG_PRO(" - URL : ") << url;
         NLOG_PRO(" - File: ") << filename;
@@ -536,14 +533,19 @@ bool DownloadFile(
         NLOG_PRO(" - Connections: ") << config.connections;
         NLOG_PRO(" - BlockSize: ") << config.blockSize;
         NLOG_PRO(" - Interval: ") << config.interval;
+        
+        DownloadFileContext context{ 
+            url, filename, kRunning, callback, config, 
+            {}, {}, chr::steady_clock::now() };
 
         if (context.config.connections > 1) //  单点下载不用探测文件长度
         {
             int timeout = context.config.timeout;
             do 
             {
-                // 当 SSL/TLS 握手失败时, 将突破 CONNECTTIMEOUT 超时限制, 因此这里需要加入重试机制
                 error.clear();
+
+                // 当 SSL/TLS 握手失败时, 将突破 CONNECTTIMEOUT 超时限制, 因此这里需要加入重试机制
                 if (!GetFileAttribute(context.attribute, context.url, context.config.header, timeout, error))
                 {
                     if (error.value() == util::kNetworkError)
@@ -589,6 +591,7 @@ bool DownloadFile(
             }
         };
 
+        // 判断使用单点下载还是多点下载, 10MB 以下的文件, 采用单点下载
         auto is_small = context.attribute.contentLength > 0 && context.attribute.contentLength < 10 * 1024 * 1024;
         if (context.attribute.contentLength == -1 || 
             context.attribute.contentLength <= context.config.blockSize ||
@@ -598,7 +601,7 @@ bool DownloadFile(
             return DownloadFileBySingle(context, error);
         }
 
-       return DownloadFileByMulti(context, error);
+        return DownloadFileByMulti(context, error);
     }
     catch (const std::exception& e)
     {
