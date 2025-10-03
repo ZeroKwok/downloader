@@ -287,6 +287,233 @@ bool HandleRequestError(
     return false;
 }
 
+struct DownloadFileContext {
+  std::string url;
+  std::filesystem::path filename;
+  std::atomic_int flag;
+  std::function<bool(const download_status &)> callback;
+  download_preference config;
+  RangeFile rf;
+  file_attribute attribute;
+  std::chrono::steady_clock::time_point start;
+};
+
+inline int measure(const std::chrono::steady_clock::time_point& start) {
+    return (int)chr::duration_cast<chr::milliseconds>(
+        chr::steady_clock::now() - start).count();
+};
+
+bool DownloadFileBySingle(DownloadFileContext& context, std::error_code& error)
+{
+    NLOG_PRO("Direct download ...");
+
+    // 未知大小 or 长度太短 or 不支持范围请求, 只能单点下载
+    context.rf.reserve(context.attribute.contentLength);
+    if (!context.rf.open(context.filename, error)) {
+        NLOG_ERR("rf.open({1}) failed, error: {2}")
+        % context.filename.wstring()
+        % error.message();
+        return !error;
+    }
+    
+    auto session = MakeSession(context.url, context.config.header);
+    session->SetProgressCallback(cpr::ProgressCallback(
+        [&](cpr::cpr_off_t downloadTotal,
+            cpr::cpr_off_t downloadNow,
+            cpr::cpr_off_t, cpr::cpr_off_t, intptr_t) -> bool
+        {
+            // downloadTotal 很可能为0
+            if (context.callback && !context.callback({ downloadTotal, downloadNow })) {
+                context.flag = kCancelled;
+                return false;
+            }
+            return true;
+        }));
+
+    cpr::Response response;
+    do 
+    {
+        std::error_code ecode;
+        response = session->Download(cpr::WriteCallback{
+            [&](const std::string_view& data, intptr_t userdata) -> bool {
+                return context.rf.fill(data, data.size(), ecode);
+            }});
+        if (HandleRequestError(response, ecode, context.flag, error))
+            return !error; // 致命错误, 直接终止
+
+        if (error.value() == util::kNetworkError)
+        {
+            if (measure(context.start) < context.config.timeout)
+            {
+                NLOG_PRO("keep trying...");
+                continue;
+            }
+        }
+        break;
+    } 
+    while (1);
+
+    if (error)
+    {
+        NLOG_ERR("Direct download failed, status code: {1}, error: {2}")
+            % response.status_code
+            % error.message();
+    }
+    else
+    {
+        NLOG_PRO("Direct download finished, status code: {1}")
+            % response.status_code;
+    }
+    return !error;
+} 
+
+bool DownloadFileByMulti(DownloadFileContext& context, std::error_code& error)
+{
+    NLOG_PRO("Multipoint download ...");
+
+    context.rf.reserve(context.attribute.contentLength, context.config.blockSize);
+    if(!context.rf.open(context.filename, error)) {
+        NLOG_ERR("RangeFile::open() failed, error: ") << error.message();
+        return !error;
+    }
+
+    // 工作线程状态
+    struct State {
+        enum { 
+            kThreadNone = 0, 
+            kThreadRunning, 
+            kThreadFinished, 
+            kThreadInterrupted 
+        };
+        int flag = kThreadNone;
+        int workerId = 0;
+        std::error_code error;
+    };
+
+    auto worker = [&](State& state)
+    {
+        state.flag = State::kThreadRunning;
+        NLOG_APP("Worker start: {1}") % std::this_thread::get_id();
+        util_scope_exit = [&] {
+            state.flag = state.error ? State::kThreadInterrupted 
+                                     : State::kThreadFinished;
+            NLOG_APP("Worker finished: {1}, flag: {2}, result: {3}")
+                % std::this_thread::get_id()
+                % context.flag.load()
+                % state.error.message();
+        };
+
+        try 
+        {
+            auto session = MakeSession(context.url, context.config.header);
+
+            Range2 range;
+            while (context.flag == kRunning && context.rf.allocate(range))
+            {
+                util_scope_exit = [&] {
+                    context.rf.deallocate(range);
+                };
+
+                std::error_code ecode;
+                session->SetOption(cpr::Range{ range.start, range.end });
+                session->SetWriteCallback(cpr::WriteCallback{
+                    [&](const std::string_view& data, intptr_t userdata) -> bool {
+                        return context.rf.fill(range, data, data.size(), ecode);
+                    } });
+                auto response = session->Get();
+                util_assert(response.status_code == 206);
+
+                if (HandleRequestError(response, ecode, context.flag, state.error)) {
+                    NLOG_ERR("HandleRequestError() Fatal error, abort({1})") % state.error;
+                    return;
+                }
+            }
+            return;
+        }
+        catch (const std::exception& e) {
+            NLOG_ERR("Unhandled exception: ") << e.what();
+        }
+        catch (...) {
+            NLOG_ERR("Unhandled exception");
+        }
+        state.error = util::MakeError(util::kRuntimeError);
+    };
+
+    std::vector<State> states(context.config.connections);
+    std::vector<std::shared_ptr<std::thread>> threads;
+    for (int i = 0; i < context.config.connections; ++i) {
+        states[i].workerId = i;
+        threads.push_back(std::make_shared<std::thread>(worker, std::ref(states[i])));
+    }
+
+
+    auto lastIndex = 0;
+    auto lastDump = chr::steady_clock::now();
+    while (context.flag.load() == kRunning && !context.rf.is_full())
+    {
+        // 在下载阶段的尾声, 部分线程开始陆续退出, 此时不会设置错误
+        // 因此, 在检测是否发生错误时, 要排除正常结束的线程.
+        if (states[lastIndex].flag == State::kThreadFinished) {
+            if (++lastIndex >= states.size())
+                break;
+        }
+
+        auto elapse = measure(context.start);
+        if (elapse > context.config.timeout)
+        {
+            if (states[lastIndex].error) // 存在错误
+            {
+                std::map<int, int> counts;
+                for (auto& s : states)
+                    counts[s.error.value()]++;
+                if (counts.count(util::kSucceed) == 0) // 所有连接均出错
+                {
+                    std::pair<int, int> item;
+                    for (auto p : counts)
+                        item = item.second > p.second ? item : p;
+                    NLOG_ERR("download_file({1}, {2}) failed, error: {3}, count: {4}")
+                        % context.url
+                        % context.filename.wstring()
+                        % item.first
+                        % item.second;
+
+                    context.flag = kFailed;
+                    error = util::MakeError(item.first);
+                    break;
+                }
+            }
+        }
+
+        if (context.callback)
+        {
+            if (!context.callback({ context.attribute.contentLength, context.rf.processed() }))
+            {
+                NLOG_WAR("callback() instructing to terminate a task...");
+
+                context.flag  = kCancelled;
+                error = util::MakeError(util::kOperationInterrupted);
+                break;
+            }
+        }
+
+        // 限制存储下载状态的频率
+        if (measure(lastDump) >= 5000)
+        {
+            std::error_code ecode;
+            if (!context.rf.dump(ecode))
+                NLOG_WAR("RangeFile::dump() failed, error: ") << ecode.message();
+            lastDump = chr::steady_clock::now();
+        }
+
+        std::this_thread::sleep_for(chr::milliseconds(context.config.interval));
+    }
+
+    for (auto t : threads)
+        t->join();
+
+    return !error;
+}
+
 bool DownloadFile(
     const std::string& url, 
     const std::filesystem::path& filename,
@@ -298,13 +525,9 @@ bool DownloadFile(
     error.clear();
     try
     {
-        std::atomic_int flag(kRunning);
-
-        auto start = chr::steady_clock::now();
-        auto measure = [](auto start) -> int {
-            return (int)chr::duration_cast<chr::milliseconds>(
-                chr::steady_clock::now() - start).count();
-            };
+        DownloadFileContext context{ 
+            url, filename, kRunning, callback, config, 
+            {}, {}, chr::steady_clock::now() };
 
         NLOG_PRO("DownloadFile() ...");
         NLOG_PRO(" - URL : ") << url;
@@ -314,19 +537,18 @@ bool DownloadFile(
         NLOG_PRO(" - BlockSize: ") << config.blockSize;
         NLOG_PRO(" - Interval: ") << config.interval;
 
-        file_attribute attribute = {};
-        if (config.connections > 1) //  单点下载不用探测文件长度
+        if (context.config.connections > 1) //  单点下载不用探测文件长度
         {
-            int timeout = config.timeout;
+            int timeout = context.config.timeout;
             do 
             {
                 // 当 SSL/TLS 握手失败时, 将突破 CONNECTTIMEOUT 超时限制, 因此这里需要加入重试机制
                 error.clear();
-                if (!GetFileAttribute(attribute, url, config.header, timeout, error))
+                if (!GetFileAttribute(context.attribute, context.url, context.config.header, timeout, error))
                 {
                     if (error.value() == util::kNetworkError)
                     {
-                        if (measure(start) < config.timeout)
+                        if (measure(context.start) < context.config.timeout)
                         {
                             NLOG_PRO("keep trying ...");
                             continue;
@@ -344,8 +566,8 @@ bool DownloadFile(
             }
 
             NLOG_PRO("GetFileAttribute() -> {1}\r\n{2}")
-                % attribute.contentLength
-                % attribute.header;
+                % context.attribute.contentLength
+                % context.attribute.header;
         }
 
         util::ferror ferr;
@@ -356,11 +578,10 @@ bool DownloadFile(
             return !(error = util::MakeErrorFromNative(ferr.code(), filename, util::kFilesystemError));
         }
 
-        RangeFile rf;
         util_scope_exit = [&] {
             auto finished = !error;
             std::error_code ecode;
-            if (rf && !rf.close(finished, ecode)) {
+            if (context.rf && !context.rf.close(finished, ecode)) {
                 error = error ? error : ecode; // 若关闭前有错误, 则不改变之前的错误
                 NLOG_ERR("RangeFile::close({1}) failed, error: {2}")
                     % (finished ? "true" : "false")
@@ -368,219 +589,21 @@ bool DownloadFile(
             }
         };
 
-        auto is_small = attribute.contentLength > 0 && attribute.contentLength < 10 * 1024 * 1024;
-        auto session1 = MakeSession(url, config.header);
-        if (attribute.contentLength == -1 || 
-            attribute.contentLength <= config.blockSize ||
-            attribute.acceptRanges.empty() ||
+        auto is_small = context.attribute.contentLength > 0 && context.attribute.contentLength < 10 * 1024 * 1024;
+        if (context.attribute.contentLength == -1 || 
+            context.attribute.contentLength <= context.config.blockSize ||
+            context.attribute.acceptRanges.empty() ||
             is_small)
         {
-            NLOG_PRO("Direct download ...");
-
-            // 未知大小 or 长度太短 or 不支持范围请求, 只能单点下载
-            rf.reserve(attribute.contentLength);
-            if (!rf.open(filename, error)) {
-                NLOG_ERR("rf.open({1}) failed, error: {2}")
-                    % filename.wstring()
-                    % error.message();
-                return !error;
-            }
-
-            session1->SetProgressCallback(cpr::ProgressCallback(
-                [&](cpr::cpr_off_t downloadTotal,
-                    cpr::cpr_off_t downloadNow,
-                    cpr::cpr_off_t, cpr::cpr_off_t, intptr_t) -> bool
-                {
-                    // downloadTotal 很可能为0
-                    if (callback && !callback({ downloadTotal, downloadNow })) {
-                        flag = kCancelled;
-                        return false;
-                    }
-                    return true;
-                }));
-
-            cpr::Response response;
-            do 
-            {
-                std::error_code ecode;
-                response = session1->Download(cpr::WriteCallback{
-                    [&](const std::string_view& data, intptr_t userdata) -> bool {
-                        return rf.fill(data, data.size(), ecode);
-                    }});
-                if (HandleRequestError(response, ecode, flag, error))
-                    return !error; // 致命错误, 直接终止
-
-                if (error.value() == util::kNetworkError)
-                {
-                    if (measure(start) < config.timeout)
-                    {
-                        NLOG_PRO("keep trying...");
-                        continue;
-                    }
-                }
-                break;
-            } 
-            while (1);
-
-            if (error)
-            {
-                NLOG_ERR("Direct download failed, status code: {1}, error: {2}")
-                    % response.status_code
-                    % error.message();
-            }
-            else
-            {
-                NLOG_PRO("Direct download finished, status code: {1}")
-                    % response.status_code;
-            }
-            return !error;
+            return DownloadFileBySingle(context, error);
         }
 
-        NLOG_PRO("Multipoint download ...");
-
-        rf.reserve(attribute.contentLength, config.blockSize);
-        if(!rf.open(filename, error)) {
-            NLOG_ERR("RangeFile::open() failed, error: ") << error.message();
-            return !error;
-        }
-
-        // 工作线程状态
-        struct State {
-            enum { 
-                kThreadNone = 0, 
-                kThreadRunning, 
-                kThreadFinished, 
-                kThreadInterrupted 
-            };
-            int flag = kThreadNone;
-            int workerId = 0;
-            std::error_code error;
-        };
-
-        auto worker = [&](State& state)
-        {
-            state.flag = State::kThreadRunning;
-            NLOG_APP("Worker start: {1}") % std::this_thread::get_id();
-            util_scope_exit = [&] {
-                state.flag = state.error ? State::kThreadInterrupted 
-                                         : State::kThreadFinished;
-                NLOG_APP("Worker finished: {1}, flag: {2}, result: {3}")
-                    % std::this_thread::get_id()
-                    % flag.load()
-                    % state.error.message();
-            };
-
-            try 
-            {
-                auto session = MakeSession(url, config.header);
-
-                Range2 range;
-                while (flag == kRunning && rf.allocate(range))
-                {
-                    util_scope_exit = [&] {
-                        rf.deallocate(range);
-                    };
-
-                    std::error_code ecode;
-                    session->SetOption(cpr::Range{ range.start, range.end });
-                    session->SetWriteCallback(cpr::WriteCallback{
-                        [&](const std::string_view& data, intptr_t userdata) -> bool {
-                            return rf.fill(range, data, data.size(), ecode);
-                        } });
-                    auto response = session->Get();
-                    util_assert(response.status_code == 206);
-
-                    if (HandleRequestError(response, ecode, flag, state.error)) {
-                        NLOG_ERR("HandleRequestError() Fatal error, abort({1})") % state.error;
-                        return;
-                    }
-                }
-                return;
-            }
-            catch (const std::exception& e) {
-                NLOG_ERR("Unhandled exception: ") << e.what();
-            }
-            catch (...) {
-                NLOG_ERR("Unhandled exception");
-            }
-            state.error = util::MakeError(util::kRuntimeError);
-        };
-
-        std::vector<State> states(config.connections);
-        std::vector<std::shared_ptr<std::thread>> threads;
-        for (int i = 0; i < config.connections; ++i) {
-            states[i].workerId = i;
-            threads.push_back(std::make_shared<std::thread>(worker, std::ref(states[i])));
-        }
-
-
-        auto lastIndex = 0;
-        auto lastDump = chr::steady_clock::now();
-        while (flag.load() == kRunning && !rf.is_full())
-        {
-            // 在下载阶段的尾声, 部分线程开始陆续退出, 此时不会设置错误
-            // 因此, 在检测是否发生错误时, 要排除正常结束的线程.
-            if (states[lastIndex].flag == State::kThreadFinished) {
-                if (++lastIndex >= states.size())
-                    break;
-            }
-
-            auto elapse = measure(start);
-            if (elapse > config.timeout)
-            {
-                if (states[lastIndex].error) // 存在错误
-                {
-                    std::map<int, int> counts;
-                    for (auto& s : states)
-                        counts[s.error.value()]++;
-                    if (counts.count(util::kSucceed) == 0) // 所有连接均出错
-                    {
-                        std::pair<int, int> item;
-                        for (auto p : counts)
-                            item = item.second > p.second ? item : p;
-                        NLOG_ERR("download_file({1}, {2}) failed, error: {3}, count: {4}")
-                            % url
-                            % filename.wstring()
-                            % item.first
-                            % item.second;
-
-                        flag = kFailed;
-                        error = util::MakeError(item.first);
-                        break;
-                    }
-                }
-            }
-
-            if (callback)
-            {
-                if (!callback({ attribute.contentLength, rf.processed() }))
-                {
-                    NLOG_WAR("callback() instructing to terminate a task...");
-
-                    flag  = kCancelled;
-                    error = util::MakeError(util::kOperationInterrupted);
-                    break;
-                }
-            }
-
-            // 限制存储下载状态的频率
-            if (measure(lastDump) >= 5000)
-            {
-                std::error_code ecode;
-                if (!rf.dump(ecode))
-                    NLOG_WAR("RangeFile::dump() failed, error: ") << ecode.message();
-                lastDump = chr::steady_clock::now();
-            }
-
-            std::this_thread::sleep_for(chr::milliseconds(config.interval));
-        }
-
-        for (auto t : threads)
-            t->join();
+       return DownloadFileByMulti(context, error);
     }
     catch (const std::exception& e)
     {
         NLOG_ERR("Unhandled exception: ") << e.what();
+        error = util::MakeError(util::kRuntimeError);
     }
     NLOG_PRO("Download() finished, result: {1}") % error.message();
 
