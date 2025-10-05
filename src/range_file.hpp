@@ -30,7 +30,10 @@
 // 包含填充状态的文件区间
 //
 struct Range2 : public Range {
-    int64_t position = 0; // 不包含右边端点
+    int64_t position = 0; // 不包含右边端点, 表示已经填充到的位置
+                          // position == start 表示未填充
+                          // position == end + 1 表示已经完全填充
+                          // start < position <= end 表示部分填充
     enum {
         kUnfilled,
         kPending,
@@ -485,7 +488,15 @@ public:
             if (size <= 0) // 没有可填充的数据
                 return true;
             util_assert(range.position >= range.start);
-            util_assert(range.position <= range.end);
+
+            // 检查填充数据是否超出范围
+            auto cmp = (range.position + size - 1) - range.end;
+            if (cmp > 0) {
+                NLOG_ERR("fill() failed, data out of range-size: {1}, fill data more than: {2}")
+                    % range.size()
+                    % cmp;
+                return !(error = util::MakeError(util::kRuntimeError));
+            }
 
             try
             {
