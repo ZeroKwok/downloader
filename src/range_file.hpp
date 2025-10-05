@@ -401,6 +401,29 @@ public:
         return !error;
     }
 
+    bool reset(int64_t size, std::error_code& error) 
+    {
+        error.clear();
+        {
+            std::lock_guard<std::mutex> locker(_mutexFile);
+            _file.close();
+        }
+        {
+            std::lock_guard<std::recursive_mutex> locker(_mutex);
+            _allocateRanges.clear();
+            _finishedRanges.clear();
+            _availableRanges.clear();
+        }
+        _blockHint = 0x100000;
+        _bytesTotal = size;
+        _bytesProcessed = 0;
+
+        if (!dump(error))
+            return !error;
+
+        return open(error);
+    }
+
     bool dump(std::error_code& error)
     {
         error.clear();

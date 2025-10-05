@@ -432,7 +432,6 @@ bool DownloadFileByMulti(DownloadFileContext& context, std::error_code& error)
                         return context.rf.fill(range, data, data.size(), ecode);
                     } });
                 auto response = session->Get();
-                // util_assert(response.status_code == 206);
 
                 if (HandleRequestError(response, ecode, context.flag, state.error)) {
                     NLOG_ERR("HandleRequestError() Fatal error, abort({1})") % state.error;
