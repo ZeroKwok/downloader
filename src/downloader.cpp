@@ -276,6 +276,7 @@ bool HandleRequestError(
         }
         return false;
 
+    case cpr::ErrorCode::WRITE_ERROR:     // 由回调终止
     default:
         NLOG_ERR("Request Error: status_code: {1}, error_code: {2}, error_message: {3}")
             % response.status_code
@@ -417,12 +418,21 @@ bool DownloadFileByMulti(DownloadFileContext& context, std::error_code& error)
 
                 std::error_code ecode;
                 session->SetOption(cpr::Range{ range.start, range.end });
+                session->SetHeaderCallback(cpr::HeaderCallback{
+                    [&](const std::string_view& head, intptr_t userdata) -> bool {
+                        if (head.find("HTTP/") == 0 && head.find("206") == head.npos) {
+                            NLOG_ERR("Error: Partial download requests return complete data: {1}")
+                                % std::string(head);
+                            return false; // 如果不是分段下载, 那么终止
+                        }
+                        return true;
+                    }});
                 session->SetWriteCallback(cpr::WriteCallback{
                     [&](const std::string_view& data, intptr_t userdata) -> bool {
                         return context.rf.fill(range, data, data.size(), ecode);
                     } });
                 auto response = session->Get();
-                util_assert(response.status_code == 206);
+                // util_assert(response.status_code == 206);
 
                 if (HandleRequestError(response, ecode, context.flag, state.error)) {
                     NLOG_ERR("HandleRequestError() Fatal error, abort({1})") % state.error;
