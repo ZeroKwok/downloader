@@ -7,4 +7,4 @@ import FTBuildSettings as builder
 
 MakeOptions1 = builder.SetProject('${PROJECT_NAME}', '${PROJECT_VERSION}', __file__)
 MakeOptions2 = { }
-builder.Build(MakeOptions1, MakeOptions2)
+builder.Build(MakeOptions1, MakeOptions2, MakeOnly=False, RelOnly=False)

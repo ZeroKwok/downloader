@@ -421,7 +421,7 @@ public:
         if (!dump(error))
             return !error;
 
-        return open(error);
+        return open(_filename, error);
     }
 
     bool dump(std::error_code& error)
