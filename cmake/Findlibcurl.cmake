@@ -4,9 +4,9 @@
 # For the full copyright and license information, please view the LICENSE
 # file that was distributed with this source code.
 
-set(_PACKAGE_NAME    "zlib")
+set(_PACKAGE_NAME    "libcurl")
 set(_PACKAGE_VERSION "${${_PACKAGE_NAME}_FIND_VERSION}")
-set(_TARGET_NAME     "xzlib")
+set(_TARGET_NAME     "libcurl")
 
 if(NOT TARGET ${_TARGET_NAME})
     include(platform)
@@ -35,16 +35,19 @@ if(NOT TARGET ${_TARGET_NAME})
     endforeach()
 
     foreach(item ${matchlist})
-        set(file "${item}/include/${_PACKAGE_NAME}.h")
+        set(file "${item}/include/curl")
         if(EXISTS "${file}")
             message("> Find Match: ${file}")
-        
+
             add_library(${_TARGET_NAME} STATIC IMPORTED)
             set_target_properties(${_TARGET_NAME} PROPERTIES
                 INTERFACE_INCLUDE_DIRECTORIES "${item}/include"
-                IMPORTED_LINK_INTERFACE_LANGUAGES "C"
-                IMPORTED_LOCATION_DEBUG "${item}/debug/lib/zlibd.lib"
-                IMPORTED_LOCATION_RELWITHDEBINFO "${item}/lib/zlib.lib"
+                INTERFACE_LINK_DIRECTORIES "${item}/lib"
+                INTERFACE_LINK_LIBRARIES "wldap32;winmm;ws2_32;advapi32;crypt32;Iphlpapi;Secur32"
+                IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
+                IMPORTED_LOCATION "${item}/lib/libcurl.lib"
+                IMPORTED_LOCATION_DEBUG "${item}/debug/lib/libcurl-d.lib"
+                IMPORTED_LOCATION_RELWITHDEBINFO "${item}/lib/libcurl.lib"
                 )
             set(${_TARGET_NAME}_FOUND true)
             break()

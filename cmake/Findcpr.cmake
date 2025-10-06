@@ -5,8 +5,8 @@
 # file that was distributed with this source code.
 
 set(_PACKAGE_NAME    "cpr")
+set(_TARGET_NAME     "cpr::cpr")
 set(_PACKAGE_VERSION "${${_PACKAGE_NAME}_FIND_VERSION}")
-set(_TARGET_NAME     "xcpr")
 
 if(NOT TARGET ${_TARGET_NAME})
     include(platform)
@@ -38,12 +38,13 @@ if(NOT TARGET ${_TARGET_NAME})
         set(file "${item}/include/${_PACKAGE_NAME}")
         if(EXISTS "${file}")
             message("> Find Match: ${file}")
-        
+
             add_library(${_TARGET_NAME} STATIC IMPORTED)
             set_target_properties(${_TARGET_NAME} PROPERTIES
                 INTERFACE_INCLUDE_DIRECTORIES "${item}/include"
                 INTERFACE_LINK_DIRECTORIES "${item}/lib"
                 IMPORTED_LINK_INTERFACE_LANGUAGES "CXX"
+                IMPORTED_LOCATION "${item}/lib/cpr.lib"
                 IMPORTED_LOCATION_DEBUG "${item}/debug/lib/cpr.lib"
                 IMPORTED_LOCATION_RELWITHDEBINFO "${item}/lib/cpr.lib"
                 )
