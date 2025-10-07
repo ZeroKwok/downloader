@@ -236,6 +236,7 @@ bool HandleRequestError(
     case cpr::ErrorCode::PROXY:
     case cpr::ErrorCode::OPERATION_TIMEDOUT:
     case cpr::ErrorCode::SSL_CONNECT_ERROR:
+    case cpr::ErrorCode::PARTIAL_FILE:
         NLOG_ERR("Request Error: status_code: {1}, error_code: {2}, error_message: {3}")
             % response.status_code
             % int(response.error.code)
@@ -277,6 +278,11 @@ bool HandleRequestError(
         return false;
 
     case cpr::ErrorCode::WRITE_ERROR:     // 由回调终止
+        if (flag == kCancelled) {
+            error = util::MakeError(util::kOperationInterrupted);
+            return true;
+        }
+
     default:
         NLOG_ERR("Request Error: status_code: {1}, error_code: {2}, error_message: {3}")
             % response.status_code
