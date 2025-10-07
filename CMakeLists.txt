@@ -32,9 +32,9 @@ set(Boost_USE_STATIC_LIBS ON)
 add_compile_definitions(BOOST_LIB_DIAGNOSTIC=1)
 add_compile_definitions(AUTO_LINK_LIB_DIAGNOSTIC=1)
 
-find_package(xcpr REQUIRED)
-find_package(xlibcurl REQUIRED)
-find_package(xzlib REQUIRED)
+find_package(zlib REQUIRED)
+find_package(libcurl REQUIRED)
+find_package(cpr REQUIRED)
 find_package(fmt REQUIRED)
 find_package(nlog REQUIRED)
 find_package(utility REQUIRED)
@@ -74,7 +74,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_PREFIX}/include>)
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER "${INCLUDE_FILES}")
 
-target_link_libraries(${PROJECT_NAME} PUBLIC fmt::fmt-header-only xcpr xlibcurl xzlib)
+target_link_libraries(${PROJECT_NAME} PUBLIC 
+    fmt::fmt-header-only cpr::cpr libcurl ZLIB::ZLIB)
 if(DOWNLOADER_STATIC_RUNTIME)
     target_link_libraries(${PROJECT_NAME} PUBLIC libnlog)
 else()
