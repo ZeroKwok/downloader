@@ -416,6 +416,9 @@ public:
     bool reset(int64_t size, std::error_code& error) 
     {
         error.clear();
+        if (_bytesProcessed == 0 && _allocateRanges.empty())
+            return true;
+
         {
             std::lock_guard<std::mutex> locker(_mutexFile);
             _file.close();

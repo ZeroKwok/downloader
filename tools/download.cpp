@@ -129,7 +129,7 @@ int main(int argc, char** argv)
                     util::win::cursor_goto(cpos);
                     util::win::output_progress(progress);
 
-                    fmt::print(" {}/{}\t{}/s        ",
+                    fmt::print(" {}/{} {}/s        ",
                         util::bytes_add_suffix(status.processedBytes),
                         (status.totalBytes == 0 ? "--" : util::bytes_add_suffix(status.totalBytes)),
                         util::bytes_add_suffix(speed));
@@ -144,7 +144,8 @@ int main(int argc, char** argv)
         {
             std::cerr << "Download failed, elapse: "
                 << util::duration_ms_format(elapse)
-                << ", error: " << ecode.message();
+                << ", error: " << ecode.message()
+                << std::endl;
         }
         else
         {

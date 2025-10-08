@@ -327,7 +327,11 @@ bool DownloadFileBySingle(DownloadFileContext& context, std::error_code& error)
     do 
     {
         auto session = MakeSession(context.url, context.config.header);
-
+        if (!context.attribute.acceptRanges.empty()) {
+            if (context.rf.processed() != 0)
+            session->SetOption(cpr::Range{ context.rf.processed() });
+        }
+        
         std::error_code ecode;
         session->SetHeaderCallback(cpr::HeaderCallback{
             [&](const std::string_view& head, intptr_t userdata) -> bool {
@@ -573,7 +577,7 @@ bool DownloadFile(
             url, filename, kRunning, callback, config, 
             {}, {}, chr::steady_clock::now() };
 
-        if (context.config.connections > 1) //  单点下载不用探测文件长度
+        // 探测文件长度
         {
             int timeout = context.config.timeout;
             do 
@@ -628,7 +632,8 @@ bool DownloadFile(
 
         // 判断使用单点下载还是多点下载, 10MB 以下的文件, 采用单点下载
         auto is_small = context.attribute.contentLength > 0 && context.attribute.contentLength < 10 * 1024 * 1024;
-        if (context.attribute.contentLength == -1 || 
+        if (context.config.connections <= 1 ||
+            context.attribute.contentLength == -1 || 
             context.attribute.contentLength <= context.config.blockSize ||
             context.attribute.acceptRanges.empty() ||
             is_small)
