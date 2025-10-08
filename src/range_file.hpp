@@ -78,7 +78,15 @@ struct RangeFileMeta {
             size += r.size();
         for (auto const& r : _allocateRanges)
             size += r.size();
-        return size == _bytesTotal; // 验证总和是否等于文件总大小
+
+        if (size == _bytesTotal) // 验证总和是否等于文件总大小
+            return true;
+        
+        // 特殊情况，文件大小未知（如流式下载），但已经处理了一些字节
+        else if (size == 0 && _bytesProcessed > 0)
+            return true;
+        else
+            return false;
     }
 };
 
@@ -317,6 +325,10 @@ public:
 
                         if (archive.valid())
                         {
+                            // 如果没有可用区间, 则可能是单点流式填充, 这里恢复文件指针
+                            if (archive._availableRanges.empty()) 
+                                util::file_seek(file, archive._bytesProcessed, 0);
+
                             std::lock_guard<std::recursive_mutex> locker(_mutex);
                             _bytesProcessed = archive._bytesProcessed;
                             _finishedRanges = std::move(archive._finishedRanges);

@@ -322,29 +322,49 @@ bool DownloadFileBySingle(DownloadFileContext& context, std::error_code& error)
         % error.message();
         return !error;
     }
-
-    auto session = MakeSession(context.url, context.config.header);
-    session->SetProgressCallback(cpr::ProgressCallback(
-        [&](cpr::cpr_off_t downloadTotal,
-            cpr::cpr_off_t downloadNow,
-            cpr::cpr_off_t, cpr::cpr_off_t, intptr_t) -> bool
-        {
-            // downloadTotal 很可能为0
-            if (context.callback && !context.callback({ downloadTotal, downloadNow })) {
-                context.flag = kCancelled;
-                return false;
-            }
-            return true;
-        }));
-
+    
     cpr::Response response;
     do 
     {
+        auto session = MakeSession(context.url, context.config.header);
+
         std::error_code ecode;
-        response = session->Download(cpr::WriteCallback{
-            [&](const std::string_view& data, intptr_t userdata) -> bool {
-                return context.rf.fill(data, data.size(), ecode);
+        session->SetHeaderCallback(cpr::HeaderCallback{
+            [&](const std::string_view& head, intptr_t userdata) -> bool {
+                if (head.find("HTTP/") == 0 && head.find("200") != head.npos) {
+                    // 如果不支持分段下载, 并且之前已经写入了一些数据, 则重置文件
+                    if (context.rf.processed() != 0)
+                        return context.rf.reset(context.attribute.contentLength, ecode);
+                }
+                return true;
             }});
+
+        auto tick = chr::steady_clock::now();
+        auto last = tick;
+        session->SetWriteCallback(cpr::WriteCallback{
+            [&](std::string_view data, intptr_t userdata) -> bool {
+                if (!context.rf.fill(data, data.size(), ecode))
+                    return false;
+
+                if (measure(tick) >= context.config.interval) {
+                    tick = chr::steady_clock::now();
+                    if (context.callback && !context.callback({ context.rf.size(), context.rf.processed() })) {
+                        context.flag = kCancelled;
+                        return false;
+                    }
+
+                    if (measure(last) >= 5000) {
+                        std::error_code ecode;
+                        if (!context.rf.dump(ecode))
+                            NLOG_WAR("RangeFile::dump() failed, error: ") << ecode.message();
+                        last = chr::steady_clock::now();
+                    }
+                }
+
+                return true;
+            }});
+        response = session->Get();
+
         if (HandleRequestError(response, ecode, context.flag, error))
             return !error; // 致命错误, 直接终止
 
@@ -413,16 +433,16 @@ bool DownloadFileByMulti(DownloadFileContext& context, std::error_code& error)
 
         try
         {
-            auto session = MakeSession(context.url, context.config.header);
-
+            
             Range2 range;
             while (context.flag == kRunning && context.rf.allocate(range))
             {
                 util_scope_exit = [&] {
                     context.rf.deallocate(range);
                 };
-
+                
                 std::error_code ecode;
+                auto session = MakeSession(context.url, context.config.header);
                 session->SetOption(cpr::Range{ range.start, range.end });
                 session->SetHeaderCallback(cpr::HeaderCallback{
                     [&](const std::string_view& head, intptr_t userdata) -> bool {
@@ -437,8 +457,8 @@ bool DownloadFileByMulti(DownloadFileContext& context, std::error_code& error)
                     [&](const std::string_view& data, intptr_t userdata) -> bool {
                         return context.rf.fill(range, data, data.size(), ecode);
                     } });
-                auto response = session->Get();
 
+                auto response = session->Get();
                 if (HandleRequestError(response, ecode, context.flag, state.error)) {
                     NLOG_ERR("HandleRequestError() Fatal error, abort({1})") % state.error;
                     return;
@@ -462,7 +482,7 @@ bool DownloadFileByMulti(DownloadFileContext& context, std::error_code& error)
         threads.push_back(std::make_shared<std::thread>(worker, std::ref(states[i])));
     }
 
-
+    // 轮询状态
     auto lastIndex = 0;
     auto lastDump = chr::steady_clock::now();
     while (context.flag.load() == kRunning && !context.rf.is_full())
