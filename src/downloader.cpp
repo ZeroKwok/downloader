@@ -162,8 +162,12 @@ bool GetFileAttribute(
         case CURLE_RECV_ERROR:
         case CURLE_SEND_ERROR:
         case CURLE_COULDNT_RESOLVE_HOST:
+        case CURLE_COULDNT_RESOLVE_PROXY:
+        case CURLE_COULDNT_CONNECT:
         case CURLE_OPERATION_TIMEDOUT:
         case CURLE_SSL_CONNECT_ERROR:
+        case CURLE_SSL_CERTPROBLEM:
+        case CURLE_SSL_CIPHER:
             // 网络错误
             NLOG_ERR("GetFileAttribute() failed, error: {1}, {2}")
                 % res
