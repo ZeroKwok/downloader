@@ -85,6 +85,8 @@ bool GetFileAttribute(
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, timeout);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 8L);
 
         // SSL 验证
         cpr::VerifySsl verify{ false };
