@@ -597,6 +597,13 @@ bool DownloadFile(
                     {
                         if (measure(context.start) < context.config.timeout)
                         {
+                            // 重试前, 允许用户取消
+                            if (context.callback && !context.callback({ 0, 0 })) {
+                                context.flag = kCancelled;
+                                error = util::MakeError(util::kOperationInterrupted);
+                                break;
+                            }
+
                             NLOG_PRO("keep trying ...");
                             continue;
                         }
