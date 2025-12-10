@@ -68,6 +68,11 @@ int main(int argc, char** argv)
         po::store(po::command_line_parser(argc, argv).options(desc).positional(pos).run(), vm);
         po::notify(vm);
 
+        if (debug) {
+            std::cout << "Press any key to continue..." << std::endl;
+            _getch();
+        }
+
         if (vm.count("help") || !vm.count("url")) {
             std::cerr << desc << std::endl;
             return -2;
@@ -75,11 +80,6 @@ int main(int argc, char** argv)
 
         if (!vm.count("file")) {
             file = util::path_find_filename(url);
-        }
-
-        if (debug) {
-            std::cout << "Press any key to continue..." << std::endl;
-            _getch();
         }
 
         download_preference preference;

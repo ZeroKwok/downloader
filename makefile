@@ -1,7 +1,8 @@
 .PHONY: config build clean
 
-# BuildConfig:=RelWithDebInfo
+PrefixPath:="G:/Local/lib/Boost/boost_1_69_0-msvc-14.1;H:/Projects/FoneTool/installed;H:/Projects/FoneTool/installed/vcpkg/installed"
 BuildConfig:=Debug
+# BuildConfig:=RelWithDebInfo
 
 config: clean
 	@echo "Configuring..."
@@ -9,7 +10,9 @@ config: clean
 	cmake -G "Visual Studio 17 2022" -A Win32 -T v141_xp \
 	-S . -B ./build/.build_static_static_x86_vc14.1_xp \
 	-DCMAKE_MODULE_PATH:PATH="H:/Projects/FoneTool/cmake" \
-	-DCMAKE_PREFIX_PATH:STRING="G:/Local/lib/Boost/boost_1_69_0-msvc-14.1;G:/Local/lib/Qt/5.15.2/5.15.2/msvc2019;G:/Local/bin/python/3.6.8;H:/Projects/FoneTool/installed;H:/Projects/FoneTool/installed/vcpkg/installed" -DCMAKE_INSTALL_PREFIX:PATH="../downloader_0.2.5.0_static_static_x86_vc14.1_xp" -DCMAKE_TOOLCHAIN_FILE:STRING="H:/Projects/FoneTool/installed/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+	-DCMAKE_PREFIX_PATH:STRING=$(PrefixPath) \
+	-DCMAKE_INSTALL_PREFIX:PATH="../downloader_0.2.5.0_static_static_x86_vc14.1_xp" \
+	-DCMAKE_TOOLCHAIN_FILE:STRING="H:/Projects/FoneTool/installed/vcpkg/scripts/buildsystems/vcpkg.cmake" \
 	-DDOWNLOADER_STATIC_RUNTIME="ON" \
 	-DDOWNLOADER_BUILD_SHARED_LIB="OFF" \
 	-DDOWNLOADER_BUILD_EXAMPLE="OFF" \
