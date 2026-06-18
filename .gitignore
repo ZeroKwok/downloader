@@ -1,3 +1,4 @@
 .vs
 build/*
 !build/templates.in
+Note.md
